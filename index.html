@@ -3,11 +3,19 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="description" content="Lumi — Nền tảng xem phim miễn phí, cập nhật liên tục." />
-  <title>Lumi — Xem phim miễn phí</title>
+  <meta name="description" content="Lumi — Nền tảng xem phim miễn phí, cập nhật liên tục, tốc độ cao." />
+  <title>Lumi — Xem phim miễn phí chất lượng cao</title>
+  
+  <!-- Tối ưu DNS & kết nối nhanh tới nguồn phim và CDN giảm tối đa độ trễ -->
+  <link rel="preconnect" href="https://phim.nguonc.com" crossorigin />
+  <link rel="dns-prefetch" href="https://phim.nguonc.com" />
+  <link rel="preconnect" href="https://embed1.streamc.xyz" crossorigin />
+  <link rel="dns-prefetch" href="https://embed1.streamc.xyz" />
+  <link rel="preconnect" href="https://streamc.xyz" crossorigin />
+  <link rel="dns-prefetch" href="https://streamc.xyz" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -19,9 +27,9 @@
   </a>
   <nav class="main-nav" aria-label="Điều hướng chính">
     <a class="nav-link active" data-page="home" href="#">Trang chủ</a>
-    <a class="nav-link" data-page="new"    href="#">Mới cập nhật</a>
-    <a class="nav-link" data-page="phim-le"  href="#">Phim lẻ</a>
-    <a class="nav-link" data-page="phim-bo"  href="#">Phim bộ</a>
+    <a class="nav-link" data-page="new" href="#">Mới cập nhật</a>
+    <a class="nav-link" data-page="phim-le" href="#">Phim lẻ</a>
+    <a class="nav-link" data-page="phim-bo" href="#">Phim bộ</a>
     <a class="nav-link" data-page="phim-chieu-rap" href="#">Chiếu rạp</a>
   </nav>
   <div class="top-actions">
@@ -34,14 +42,14 @@
       <span id="themeIcon">☀</span>
     </button>
     <button class="auth-btn" id="authBtn">
-      <span class="avatar-icon" id="avatarIcon">👤</span>
+      <span class="avatar-badge" id="avatarBadge">👤</span>
       <span id="authLabel">Đăng nhập</span>
     </button>
   </div>
   <button class="hamburger" id="hamburger" aria-label="Menu">☰</button>
 </header>
 
-<!-- Mobile nav drawer -->
+<!-- Mobile nav -->
 <div class="mobile-nav" id="mobileNav">
   <a class="nav-link" data-page="home">Trang chủ</a>
   <a class="nav-link" data-page="new">Mới cập nhật</a>
@@ -50,12 +58,12 @@
   <a class="nav-link" data-page="phim-chieu-rap">Chiếu rạp</a>
 </div>
 
-<!-- ── MAIN ───────────────────────────────────────────────── -->
+<!-- ── MAIN CONTENT ───────────────────────────────────────── -->
 <main id="mainContent">
 
-  <!-- HOME PAGE -->
+  <!-- 1. HOME PAGE -->
   <div id="pageHome" class="page active">
-    <!-- Hero banner -->
+    <!-- Hero Banner -->
     <section class="hero-banner" id="heroBanner">
       <div class="hero-bg" id="heroBg"></div>
       <div class="hero-overlay"></div>
@@ -76,63 +84,60 @@
         <div class="filter-row">
           <div class="select-group">
             <label>Thể loại</label>
-            <select id="filterGenre"><option value="">Tất cả</option></select>
+            <select id="filterGenre"><option value="">Tất cả thể loại</option></select>
           </div>
           <div class="select-group">
             <label>Quốc gia</label>
-            <select id="filterCountry"><option value="">Tất cả</option></select>
+            <select id="filterCountry"><option value="">Tất cả quốc gia</option></select>
           </div>
           <div class="select-group">
-            <label>Năm</label>
-            <select id="filterYear"><option value="">Tất cả</option></select>
+            <label>Năm phát hành</label>
+            <select id="filterYear"><option value="">Tất cả năm</option></select>
           </div>
           <div class="select-group">
             <label>Ngôn ngữ</label>
-            <select id="filterLang"><option value="">Tất cả</option></select>
+            <select id="filterLang"><option value="">Tất cả ngôn ngữ</option></select>
           </div>
           <button class="filter-apply-btn" id="filterApply">Lọc phim</button>
-          <button class="filter-reset-btn" id="filterReset">✕ Xóa</button>
+          <button class="filter-reset-btn" id="filterReset">✕ Xóa lọc</button>
         </div>
       </div>
     </section>
 
-    <!-- Sections -->
+    <!-- Home Sections -->
     <div class="container">
-      <section class="film-section" id="secNew">
+      <section class="film-section">
         <div class="section-head">
-          <h2>🔥 Mới cập nhật</h2>
+          <h2>🔥 Phim Mới Cập Nhật</h2>
           <a class="see-all" data-page="new" href="#">Xem tất cả →</a>
         </div>
         <div class="film-row" id="rowNew"></div>
       </section>
-
-      <section class="film-section" id="secPhimLe">
+      <section class="film-section">
         <div class="section-head">
-          <h2>🎬 Phim lẻ</h2>
+          <h2>🎬 Phim Lẻ Hay Nhất</h2>
           <a class="see-all" data-page="phim-le" href="#">Xem tất cả →</a>
         </div>
         <div class="film-row" id="rowPhimLe"></div>
       </section>
-
-      <section class="film-section" id="secPhimBo">
+      <section class="film-section">
         <div class="section-head">
-          <h2>📺 Phim bộ</h2>
+          <h2>📺 Phim Bộ Chọn Lọc</h2>
           <a class="see-all" data-page="phim-bo" href="#">Xem tất cả →</a>
         </div>
         <div class="film-row" id="rowPhimBo"></div>
       </section>
-
-      <section class="film-section" id="secRap">
+      <section class="film-section">
         <div class="section-head">
-          <h2>🎭 Chiếu rạp</h2>
+          <h2>🎭 Phim Chiếu Rạp Đỉnh Cao</h2>
           <a class="see-all" data-page="phim-chieu-rap" href="#">Xem tất cả →</a>
         </div>
         <div class="film-row" id="rowRap"></div>
       </section>
     </div>
-  </div><!-- /pageHome -->
+  </div>
 
-  <!-- LIST PAGE (Phim lẻ / Phim bộ / Chiếu rạp / Mới / Tìm kiếm / Thể loại / Quốc gia / Năm) -->
+  <!-- 2. LIST PAGE -->
   <div id="pageList" class="page">
     <div class="container">
       <div class="page-list-head">
@@ -143,114 +148,324 @@
       <div class="empty-state hidden" id="emptyState">
         <div class="empty-icon">🎬</div>
         <h3>Không tìm thấy phim phù hợp</h3>
-        <p>Thử thay đổi từ khoá hoặc bộ lọc khác.</p>
+        <p>Thử thay đổi từ khoá hoặc điều chỉnh lại bộ lọc.</p>
       </div>
       <div class="pagination" id="pagination"></div>
     </div>
-  </div><!-- /pageList -->
+  </div>
 
-  <!-- DETAIL PAGE -->
+  <!-- 3. DETAIL PAGE -->
   <div id="pageDetail" class="page">
     <div class="container">
       <button class="back-btn" id="backBtn">← Quay lại</button>
       <div id="detailContent"></div>
     </div>
-  </div><!-- /pageDetail -->
+  </div>
 
-  <!-- WATCH PAGE -->
+  <!-- 4. WATCH PAGE -->
   <div id="pageWatch" class="page">
     <div class="watch-layout">
+      <!-- Player Area -->
       <div class="watch-player-wrap">
         <div class="player-header">
-          <button class="back-btn" id="backFromWatch">← Quay lại</button>
-          <div class="player-title" id="playerTitle"></div>
+          <button class="back-btn sm" id="backFromWatch">← Chi tiết</button>
+          <div class="player-title-box">
+            <h1 class="player-title" id="playerTitle">Đang tải video...</h1>
+            <span class="player-subtitle" id="playerSubtitle">Nguồn phát ổn định · Tốc độ cao</span>
+          </div>
+          <!-- Skip/Prev Controls -->
+          <div class="ep-nav-controls">
+            <button class="ep-nav-btn" id="prevEpBtn" title="Quay lại tập trước (Phím P)" disabled>
+              <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M6 6h2v12H6zm3.5 6 8.5 6V6z"/></svg>
+              <span>Tập trước</span>
+            </button>
+            <button class="ep-nav-btn accent" id="nextEpBtn" title="Chuyển tập tiếp theo (Phím N)" disabled>
+              <span>Tập tiếp theo</span>
+              <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M6 18l8.5-6L6 6v12zm2.5-6 5.5 4V8l-5.5 4zm7-6h2v12h-2z"/></svg>
+            </button>
+          </div>
         </div>
-        <div class="player-frame-wrap">
-          <iframe id="playerFrame" allowfullscreen allow="autoplay; fullscreen" loading="lazy"></iframe>
+
+        <!-- Player Video Frame Wrapper (Hardware-accelerated) -->
+        <div class="player-frame-wrap" id="playerFrameWrap">
+          <iframe id="playerFrame" allowfullscreen allow="autoplay; fullscreen; picture-in-picture; encrypted-media; gyroscope; accelerometer" referrerpolicy="no-referrer" loading="eager" importance="high"></iframe>
+          <div class="player-loader hidden" id="playerLoader">
+            <div class="spinner"></div>
+            <span>Đang chuyển tập phim...</span>
+          </div>
+        </div>
+
+        <div class="player-toolbar">
+          <div class="toolbar-right" style="margin-left:auto;">
+            <button class="toolbar-btn sm" id="btnShortcutsHelp" title="Xem hướng dẫn phím tắt">
+              <span>⌨️ Phím tắt</span>
+            </button>
+          </div>
         </div>
       </div>
+
+      <!-- Watch Sidebar (Danh sách tập đầy đủ) -->
       <aside class="watch-sidebar">
         <div class="ep-list-head">
-          <span id="epServerLabel">Máy chủ</span>
+          <span>Chọn máy chủ phát:</span>
           <div class="server-tabs" id="serverTabs"></div>
+        </div>
+        <!-- Search within episode list -->
+        <div class="ep-search-wrap">
+          <input id="epSearch" type="search" placeholder="🔍 Tìm nhanh số tập..." autocomplete="off" />
         </div>
         <div class="ep-grid" id="epGrid"></div>
       </aside>
     </div>
-  </div><!-- /pageWatch -->
+  </div>
 
 </main>
 
+<!-- ── FOOTER ─────────────────────────────────────────────── -->
 <footer class="site-footer">
   <div class="container footer-inner">
     <a class="brand" href="#" id="footerBrand"><span class="brand-icon">▶</span><span class="brand-text">Lumi</span></a>
-    <p>Nền tảng xem phim miễn phí · Nội dung từ nguonc.com</p>
+    <p>Nền tảng xem phim miễn phí không giới hạn · Nguồn dữ liệu từ phim.nguonc.com</p>
     <p class="footer-links">
       <a data-page="new" href="#">Mới cập nhật</a> ·
       <a data-page="phim-le" href="#">Phim lẻ</a> ·
       <a data-page="phim-bo" href="#">Phim bộ</a> ·
       <a data-page="phim-chieu-rap" href="#">Chiếu rạp</a>
     </p>
+    <p class="footer-sub">Trải nghiệm xem phim mượt mà, tối thiểu độ trễ, lưu lịch sử tự động.</p>
   </div>
 </footer>
 
 <!-- ── MODALS ──────────────────────────────────────────────── -->
 
-<!-- Auth Modal -->
+<!-- 1. Auth Modal (Login / Signup) -->
 <div class="modal-backdrop hidden" id="authModal">
   <div class="modal auth-modal">
-    <button class="modal-close" data-close="authModal">×</button>
-    <div class="auth-tabs">
+    <button class="modal-close" id="authModalClose">×</button>
+    <div class="auth-tabs" id="authTabBar">
       <button class="auth-tab active" data-tab="login">Đăng nhập</button>
       <button class="auth-tab" data-tab="signup">Đăng ký</button>
     </div>
-    <!-- Login form -->
+
+    <!-- LOGIN FORM -->
     <div class="auth-form-wrap" id="loginForm">
       <div class="brand-hero"><span class="brand-icon">▶</span><span class="brand-text">Lumi</span></div>
-      <p class="auth-sub">Chào mừng trở lại! Đăng nhập để lưu phim yêu thích.</p>
+      <p class="auth-sub">Đăng nhập để đồng bộ lịch sử xem và danh sách phim yêu thích.</p>
       <form id="loginFormEl" novalidate>
         <div class="form-group">
           <label for="loginEmail">Email</label>
           <input id="loginEmail" type="email" placeholder="you@example.com" required />
         </div>
-        <div class="form-group">
+        <div class="form-group pass-group">
           <label for="loginPassword">Mật khẩu</label>
-          <input id="loginPassword" type="password" placeholder="••••••••" required />
+          <div class="pass-wrap">
+            <input id="loginPassword" type="password" placeholder="••••••••" required />
+            <button type="button" class="pass-toggle" data-target="loginPassword" title="Hiện/Ẩn mật khẩu">👁</button>
+          </div>
         </div>
         <div class="form-error hidden" id="loginError"></div>
-        <button class="submit-btn" type="submit">Đăng nhập →</button>
+        <button class="submit-btn" type="submit">Đăng nhập ngay →</button>
       </form>
       <div class="auth-divider"><span>hoặc tiếp tục với</span></div>
       <button class="social-btn google-btn" id="googleLoginBtn">
         <svg viewBox="0 0 24 24" width="20" height="20"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
-        Google
+        <span>Đăng nhập với Google</span>
       </button>
     </div>
-    <!-- Signup form -->
+
+    <!-- SIGNUP FORM -->
     <div class="auth-form-wrap hidden" id="signupForm">
       <div class="brand-hero"><span class="brand-icon">▶</span><span class="brand-text">Lumi</span></div>
-      <p class="auth-sub">Tạo tài khoản miễn phí và xem phim không giới hạn.</p>
+      <p class="auth-sub">Tạo tài khoản miễn phí để trải nghiệm kho phim không giới hạn.</p>
       <form id="signupFormEl" novalidate>
         <div class="form-group">
-          <label for="signupName">Họ tên</label>
-          <input id="signupName" type="text" placeholder="Tên của bạn" required />
+          <label for="signupName">Họ và tên</label>
+          <input id="signupName" type="text" placeholder="Ví dụ: Nguyễn Văn A" required />
         </div>
         <div class="form-group">
           <label for="signupEmail">Email</label>
           <input id="signupEmail" type="email" placeholder="you@example.com" required />
         </div>
-        <div class="form-group">
+        <div class="form-group pass-group">
           <label for="signupPassword">Mật khẩu</label>
-          <input id="signupPassword" type="password" placeholder="Tối thiểu 6 ký tự" required />
+          <div class="pass-wrap">
+            <input id="signupPassword" type="password" placeholder="Tối thiểu 6 ký tự" required />
+            <button type="button" class="pass-toggle" data-target="signupPassword" title="Hiện/Ẩn mật khẩu">👁</button>
+          </div>
         </div>
         <div class="form-error hidden" id="signupError"></div>
-        <button class="submit-btn" type="submit">Tạo tài khoản →</button>
+        <button class="submit-btn" type="submit">Đăng ký tài khoản →</button>
       </form>
     </div>
   </div>
 </div>
 
-<!-- Toast notification -->
+<!-- 2. Google Account Chooser Modal (Giao diện chọn tài khoản Google chuẩn) -->
+<div class="modal-backdrop hidden" id="googleChooserModal">
+  <div class="modal google-chooser-modal">
+    <button class="modal-close" id="googleChooserClose">×</button>
+    <div class="google-header">
+      <svg viewBox="0 0 24 24" width="28" height="28"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+      <div>
+        <h3>Đăng nhập bằng Google</h3>
+        <p>Chọn tài khoản để tiếp tục đến Lumi Movie</p>
+      </div>
+    </div>
+    <div class="google-acc-list" id="googleAccList">
+      <div class="google-acc-item" data-email="nguyenvana.film@gmail.com" data-name="Nguyễn Văn A" data-avatar="A">
+        <div class="google-acc-avatar color-blue">A</div>
+        <div class="google-acc-info">
+          <div class="google-acc-name">Nguyễn Văn A</div>
+          <div class="google-acc-email">nguyenvana.film@gmail.com</div>
+        </div>
+      </div>
+      <div class="google-acc-item" data-email="minhtrang.cinema@gmail.com" data-name="Minh Trang" data-avatar="M">
+        <div class="google-acc-avatar color-green">M</div>
+        <div class="google-acc-info">
+          <div class="google-acc-name">Minh Trang</div>
+          <div class="google-acc-email">minhtrang.cinema@gmail.com</div>
+        </div>
+      </div>
+      <div class="google-acc-item" id="googleCustomAccBtn">
+        <div class="google-acc-avatar color-gray">+</div>
+        <div class="google-acc-info">
+          <div class="google-acc-name">Sử dụng tài khoản khác</div>
+          <div class="google-acc-email">Nhập email Google của bạn</div>
+        </div>
+      </div>
+    </div>
+    <!-- Custom Google Account input -->
+    <div class="google-custom-box hidden" id="googleCustomBox">
+      <input type="text" id="customGoogleName" placeholder="Tên của bạn..." />
+      <input type="email" id="customGoogleEmail" placeholder="your_email@gmail.com" />
+      <button class="submit-btn" id="customGoogleSubmit">Xác nhận đăng nhập Google</button>
+    </div>
+  </div>
+</div>
+
+<!-- 3. Profile Modal (Thông tin, Lịch sử xem, Phim yêu thích, Đổi mật khẩu) -->
+<div class="modal-backdrop hidden" id="profileModal">
+  <div class="modal profile-modal">
+    <button class="modal-close" id="profileModalClose">×</button>
+    <div class="profile-header">
+      <div class="profile-avatar" id="profileAvatar">👤</div>
+      <div class="profile-meta">
+        <div class="profile-name" id="profileName">Tên người dùng</div>
+        <div class="profile-email" id="profileEmail">email@example.com</div>
+        <div class="profile-badge-row">
+          <span class="profile-badge" id="profileBadge">Lumi Member</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Profile Tabs -->
+    <div class="profile-tabs">
+      <button class="profile-tab active" data-ptab="info">👤 Thông tin</button>
+      <button class="profile-tab" data-ptab="history">🕒 Lịch sử xem</button>
+      <button class="profile-tab" data-ptab="favs">♥ Yêu thích</button>
+      <button class="profile-tab" data-ptab="password">🔒 Đổi mật khẩu</button>
+    </div>
+
+    <!-- Tab 1: Info -->
+    <div class="profile-panel active" id="ptabInfo">
+      <div class="profile-stats">
+        <div class="stat-card">
+          <span class="stat-num" id="statHistoryCount">0</span>
+          <span class="stat-label">Phim đã xem</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-num" id="statFavCount">0</span>
+          <span class="stat-label">Phim yêu thích</span>
+        </div>
+      </div>
+      <form id="profileInfoForm" novalidate>
+        <div class="form-group">
+          <label>Họ và tên</label>
+          <input id="profileNameInput" type="text" placeholder="Tên hiển thị" required />
+        </div>
+        <div class="form-group">
+          <label>Email tài khoản</label>
+          <input id="profileEmailInput" type="email" disabled title="Email không thể thay đổi" />
+        </div>
+        <div class="form-error hidden" id="profileInfoError"></div>
+        <button class="submit-btn" type="submit">Lưu thay đổi</button>
+      </form>
+    </div>
+
+    <!-- Tab 2: Watch History -->
+    <div class="profile-panel hidden" id="ptabHistory">
+      <div class="profile-history-header">
+        <span>Danh sách các tập phim bạn đã xem gần đây:</span>
+        <button class="text-danger-btn" id="clearHistoryBtn">🗑 Xoá tất cả lịch sử</button>
+      </div>
+      <div class="profile-list" id="historyList"></div>
+    </div>
+
+    <!-- Tab 3: Favs -->
+    <div class="profile-panel hidden" id="ptabFavs">
+      <div class="profile-history-header">
+        <span>Phim đã lưu vào danh sách yêu thích:</span>
+      </div>
+      <div class="profile-list" id="favsList"></div>
+    </div>
+
+    <!-- Tab 4: Change Password -->
+    <div class="profile-panel hidden" id="ptabPassword">
+      <!-- Dành cho tài khoản Google -->
+      <div class="google-password-notice hidden" id="googlePasswordNotice">
+        <div class="notice-icon">🛡️</div>
+        <h4>Đăng nhập bảo mật qua Google</h4>
+        <p>Tài khoản của bạn được liên kết trực tiếp qua Google OAuth. Bạn không cần mật khẩu riêng cho Lumi để đảm bảo an toàn tuyệt đối.</p>
+      </div>
+
+      <!-- Dành cho tài khoản thường -->
+      <form id="changePassForm" novalidate>
+        <div class="form-group pass-group">
+          <label>Mật khẩu hiện tại</label>
+          <div class="pass-wrap">
+            <input id="oldPassword" type="password" placeholder="••••••••" required />
+            <button type="button" class="pass-toggle" data-target="oldPassword" title="Hiện/Ẩn">👁</button>
+          </div>
+        </div>
+        <div class="form-group pass-group">
+          <label>Mật khẩu mới</label>
+          <div class="pass-wrap">
+            <input id="newPassword" type="password" placeholder="Tối thiểu 6 ký tự" required />
+            <button type="button" class="pass-toggle" data-target="newPassword" title="Hiện/Ẩn">👁</button>
+          </div>
+        </div>
+        <div class="form-group pass-group">
+          <label>Xác nhận mật khẩu mới</label>
+          <div class="pass-wrap">
+            <input id="confirmPassword" type="password" placeholder="Nhập lại mật khẩu mới" required />
+            <button type="button" class="pass-toggle" data-target="confirmPassword" title="Hiện/Ẩn">👁</button>
+          </div>
+        </div>
+        <div class="form-error hidden" id="changePassError"></div>
+        <button class="submit-btn" type="submit">Cập nhật mật khẩu mới</button>
+      </form>
+    </div>
+
+    <div class="profile-footer">
+      <button class="danger-btn" id="profileLogoutBtn">Đăng xuất</button>
+    </div>
+  </div>
+</div>
+
+<!-- 4. Keyboard Shortcuts Help Modal -->
+<div class="modal-backdrop hidden" id="shortcutsModal">
+  <div class="modal shortcuts-modal">
+    <button class="modal-close" id="shortcutsClose">×</button>
+    <h3 style="margin-bottom:14px">⌨️ Phím tắt điều khiển</h3>
+    <p style="color:var(--text3);font-size:13px;margin-bottom:18px">Chỉ dùng các lệnh cơ bản do nguồn phát video đã tích hợp sẵn:</p>
+    <div class="shortcut-list">
+      <div class="shortcut-item"><span>N</span><strong>Chuyển tập tiếp theo</strong></div>
+      <div class="shortcut-item"><span>P</span><strong>Quay lại tập trước</strong></div>
+    </div>
+  </div>
+</div>
+
+<!-- Toast Notification -->
 <div class="toast hidden" id="toast"></div>
 
 <script src="app.js"></script>

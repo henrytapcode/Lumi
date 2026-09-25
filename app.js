@@ -1,43 +1,33 @@
 /**
- * Lumi – Movie Website
- * Source API: https://phim.nguonc.com/api
- *
- * Architecture:
- *  - CacheStore  : in-memory TTL cache with localStorage persistence
- *  - API         : fetch wrapper with timeout, retry, CORS proxy
- *  - Auth        : localStorage-based mock auth (email/password + Google stub)
- *  - Router      : hash-based SPA router
- *  - UI helpers  : skeleton, toast, pagination, film card builder
+ * Lumi – Movie Website (Vanilla JS)
+ * Cải thiện:
+ *  - Tài khoản & Đăng nhập Google (Google Chooser Modal, lưu thông tin, đổi mật khẩu)
+ *  - Lưu dữ liệu lịch sử xem chi tiết, resume xem tiếp, danh sách tập đã xem (watched badge)
+ *  - Chọn tập phim tùy chọn nhanh chóng ngay tại Detail và qua Episode Picker Modal
+ *  - Điều hướng Next/Prev tập không delay, quick-bar
+ *  - Tối ưu trải nghiệm xem phim với theo dõi lịch sử, đánh dấu tập đã xem và đăng nhập tài khoản nhất quán
  */
 
 'use strict';
 
 /* ═══════════════════════════════════════════════════════
-   1. CONFIG
+   1. CONFIG & CACHE ENGINE
 ═══════════════════════════════════════════════════════ */
 const CFG = {
   BASE: 'https://phim.nguonc.com/api',
-  CACHE_TTL: {
-    list: 5 * 60 * 1000,      // 5 min for list pages
-    detail: 15 * 60 * 1000,   // 15 min for film detail
-    search: 2 * 60 * 1000,    // 2 min for search results
-  },
-  TIMEOUT: 10000,              // 10s request timeout
-  RETRY: 2,                    // max retries
-  RETRY_DELAY: 800,            // ms between retries
-  HERO_INTERVAL: 6000,         // hero banner rotation
-  SEARCH_DEBOUNCE: 350,        // search input debounce
-  ITEMS_PER_HOME_ROW: 12,      // cards per home section
+  CACHE_TTL: { list: 6 * 60 * 1000, detail: 20 * 60 * 1000, search: 3 * 60 * 1000 },
+  TIMEOUT: 12000,
+  RETRY: 2,
+  RETRY_DELAY: 600,
+  HERO_INTERVAL: 6000,
+  SEARCH_DEBOUNCE: 300,
+  ITEMS_PER_HOME_ROW: 12,
 };
 
-/* ═══════════════════════════════════════════════════════
-   2. CACHE
-═══════════════════════════════════════════════════════ */
 const Cache = (() => {
   const mem = new Map();
-  const LS_KEY = 'lumi_cache_v2';
+  const LS_KEY = 'lumi_cache_v4';
 
-  // Restore from localStorage on boot
   try {
     const saved = JSON.parse(localStorage.getItem(LS_KEY) || '{}');
     const now = Date.now();
@@ -63,25 +53,27 @@ const Cache = (() => {
     },
     set(key, data, ttl = CFG.CACHE_TTL.list) {
       mem.set(key, { data, exp: Date.now() + ttl });
-      // Debounce persist
-      clearTimeout(Cache._pt);
-      Cache._pt = setTimeout(persist, 1500);
+      clearTimeout(this._pt);
+      this._pt = setTimeout(persist, 1200);
     },
     del(key) { mem.delete(key); },
-    clear() { mem.clear(); try { localStorage.removeItem(LS_KEY); } catch(_){} },
-    _pt: null,
+    clear() { mem.clear(); try { localStorage.removeItem(LS_KEY); } catch(_){} }
   };
 })();
 
 /* ═══════════════════════════════════════════════════════
-   3. API
+   2. API CLIENT (Pre-cached & low latency)
 ═══════════════════════════════════════════════════════ */
 const API = (() => {
   async function fetchWithTimeout(url, opts = {}) {
     const ctrl = new AbortController();
     const tid = setTimeout(() => ctrl.abort(), CFG.TIMEOUT);
     try {
-      const res = await fetch(url, { ...opts, signal: ctrl.signal });
+      const res = await fetch(url, {
+        ...opts,
+        signal: ctrl.signal,
+        cache: 'no-store'
+      });
       clearTimeout(tid);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
@@ -91,15 +83,16 @@ const API = (() => {
     }
   }
 
-  async function req(url, ttl = CFG.CACHE_TTL.list) {
-    const cached = Cache.get(url);
-    if (cached) return cached;
-
+  async function req(url, ttl = CFG.CACHE_TTL.list, force = false) {
+    if (!force) {
+      const cached = Cache.get(url);
+      if (cached) return cached;
+    }
     let lastErr;
     for (let i = 0; i <= CFG.RETRY; i++) {
       try {
         const data = await fetchWithTimeout(url);
-        Cache.set(url, data, ttl);
+        if (!force) Cache.set(url, data, ttl);
         return data;
       } catch (e) {
         lastErr = e;
@@ -110,86 +103,253 @@ const API = (() => {
   }
 
   return {
-    // 1. List endpoints
-    newUpdated: (page = 1) => req(`${CFG.BASE}/films/phim-moi-cap-nhat?page=${page}`),
-    listBySlug: (slug, page = 1) => req(`${CFG.BASE}/films/danh-sach/${slug}?page=${page}`),
-
-    // 2. Detail
-    detail: (slug) => req(`${CFG.BASE}/film/${slug}`, CFG.CACHE_TTL.detail),
-
-    // 3. Filters
-    byGenre:   (slug, page = 1) => req(`${CFG.BASE}/films/the-loai/${slug}?page=${page}`),
-    byCountry: (slug, page = 1) => req(`${CFG.BASE}/films/quoc-gia/${slug}?page=${page}`),
-    byYear:    (year, page = 1) => req(`${CFG.BASE}/films/nam-phat-hanh/${year}?page=${page}`),
-    byLang:    (slug, page = 1) => req(`${CFG.BASE}/films/ngon-ngu/${slug}?page=${page}`),
-
-    // 4. Search
+    newUpdated: (p = 1) => req(`${CFG.BASE}/films/phim-moi-cap-nhat?page=${p}`, CFG.CACHE_TTL.list, true),
+    listBySlug: (s, p = 1) => req(`${CFG.BASE}/films/danh-sach/${s}?page=${p}`),
+    detail: (s) => req(`${CFG.BASE}/film/${s}`, CFG.CACHE_TTL.detail),
+    byGenre: (s, p = 1) => req(`${CFG.BASE}/films/the-loai/${s}?page=${p}`),
+    byCountry: (s, p = 1) => req(`${CFG.BASE}/films/quoc-gia/${s}?page=${p}`),
+    byYear: (y, p = 1) => req(`${CFG.BASE}/films/nam-phat-hanh/${y}?page=${p}`),
+    byLang: (s, p = 1) => req(`${CFG.BASE}/films/ngon-ngu/${s}?page=${p}`),
     search: (kw) => req(`${CFG.BASE}/films/search?keyword=${encodeURIComponent(kw)}`, CFG.CACHE_TTL.search),
   };
 })();
 
 /* ═══════════════════════════════════════════════════════
-   4. AUTH (localStorage mock)
+   3. AUTH & USER DATA (Tài khoản, Google, Lịch sử, Yêu thích)
 ═══════════════════════════════════════════════════════ */
 const Auth = (() => {
-  const LS = 'lumi_user';
+  const LS_USER = 'lumi_user';
+  const LS_USERS_DB = 'lumi_users_db';
+  const LS_FAV = 'lumi_favs';
+  const LS_HIST = 'lumi_history';
+  const LS_WATCHED = 'lumi_watched_eps';
+
   let user = null;
+  try { user = JSON.parse(localStorage.getItem(LS_USER)); } catch(_) {}
 
-  try { user = JSON.parse(localStorage.getItem(LS)); } catch(_) {}
-
-  function save(u) {
+  function getUsersDB() {
+    try { return JSON.parse(localStorage.getItem(LS_USERS_DB) || '{}'); } catch { return {}; }
+  }
+  function saveUsersDB(db) {
+    try { localStorage.setItem(LS_USERS_DB, JSON.stringify(db)); } catch(_) {}
+  }
+  function saveUser(u) {
     user = u;
-    localStorage.setItem(LS, JSON.stringify(u));
+    if (u) localStorage.setItem(LS_USER, JSON.stringify(u));
+    else localStorage.removeItem(LS_USER);
+  }
+  function userScopedKey(prefix) {
+    const email = user?.email || (() => {
+      try {
+        const active = JSON.parse(localStorage.getItem(LS_USER) || 'null');
+        return active?.email || '';
+      } catch {
+        return '';
+      }
+    })();
+    return email ? `${prefix}_${encodeURIComponent(email.toLowerCase())}` : prefix;
+  }
+  function readJson(key, fallback) {
+    try {
+      const raw = localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : fallback;
+    } catch {
+      return fallback;
+    }
+  }
+  function writeJson(key, value) {
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+    } catch {}
   }
 
   return {
     current: () => user,
     isLoggedIn: () => !!user,
 
-    login(email, password) {
-      // Mock: any valid-looking email + password ≥ 6 chars
-      if (!email.includes('@')) return { ok: false, err: 'Email không hợp lệ.' };
-      if (password.length < 6) return { ok: false, err: 'Mật khẩu phải có ít nhất 6 ký tự.' };
-      const name = email.split('@')[0].replace(/[._]/g, ' ');
-      save({ name, email, avatar: name[0].toUpperCase() });
-      return { ok: true };
-    },
-
+    // Đăng ký tài khoản thường
     signup(name, email, password) {
-      if (!name.trim()) return { ok: false, err: 'Vui lòng nhập họ tên.' };
+      name = name.trim();
+      email = email.trim().toLowerCase();
+      if (!name) return { ok: false, err: 'Vui lòng nhập họ và tên.' };
       if (!email.includes('@')) return { ok: false, err: 'Email không hợp lệ.' };
-      if (password.length < 6) return { ok: false, err: 'Mật khẩu phải có ít nhất 6 ký tự.' };
-      save({ name: name.trim(), email, avatar: name.trim()[0].toUpperCase() });
+      if (password.length < 6) return { ok: false, err: 'Mật khẩu phải từ 6 ký tự.' };
+
+      const db = getUsersDB();
+      if (db[email]) return { ok: false, err: 'Email này đã được sử dụng. Vui lòng đăng nhập.' };
+
+      const newUser = {
+        name, email, password,
+        avatar: name[0].toUpperCase(),
+        type: 'local',
+        createdAt: Date.now()
+      };
+      db[email] = newUser;
+      saveUsersDB(db);
+      saveUser(newUser);
       return { ok: true };
     },
 
-    googleLogin() {
-      const name = 'Người dùng Google';
-      save({ name, email: 'google@gmail.com', avatar: 'G' });
+    // Đăng nhập tài khoản thường
+    login(email, password) {
+      email = email.trim().toLowerCase();
+      if (!email.includes('@')) return { ok: false, err: 'Email không đúng định dạng.' };
+      if (!password) return { ok: false, err: 'Vui lòng nhập mật khẩu.' };
+
+      const db = getUsersDB();
+      const existing = db[email];
+      if (!existing) {
+        return { ok: false, err: 'Email hoặc mật khẩu không chính xác.' };
+      }
+      if (existing.password !== password) {
+        return { ok: false, err: 'Email hoặc mật khẩu không chính xác.' };
+      }
+      saveUser(existing);
+      return { ok: true };
+    },
+
+    // Đăng nhập Google
+    googleLogin(name, email, avatar = '') {
+      email = (email || 'google.user@gmail.com').toLowerCase().trim();
+      name = name ? name.trim() : 'Người dùng Google';
+      const db = getUsersDB();
+      const existing = db[email];
+      const u = {
+        name,
+        email,
+        avatar: avatar || name[0].toUpperCase(),
+        type: 'google',
+        createdAt: existing?.createdAt || Date.now(),
+        password: existing?.password || undefined
+      };
+      db[email] = u;
+      saveUsersDB(db);
+      saveUser(u);
+      return { ok: true };
+    },
+
+    // Cập nhật thông tin
+    updateInfo(name) {
+      if (!user) return { ok: false };
+      user.name = name.trim();
+      user.avatar = user.name[0].toUpperCase();
+      saveUser(user);
+      const db = getUsersDB();
+      if (db[user.email]) {
+        db[user.email].name = user.name;
+        db[user.email].avatar = user.avatar;
+        saveUsersDB(db);
+      }
+      return { ok: true };
+    },
+
+    // Đổi mật khẩu
+    changePassword(oldPw, newPw) {
+      if (!user) return { ok: false, err: 'Chưa đăng nhập.' };
+      if (user.type === 'google') {
+        return { ok: false, err: 'Tài khoản Google không sử dụng mật khẩu tại đây.' };
+      }
+      if (user.password && user.password !== oldPw) {
+        return { ok: false, err: 'Mật khẩu hiện tại không chính xác.' };
+      }
+      if (newPw.length < 6) {
+        return { ok: false, err: 'Mật khẩu mới phải có tối thiểu 6 ký tự.' };
+      }
+      if (oldPw === newPw) {
+        return { ok: false, err: 'Mật khẩu mới không được trùng với mật khẩu cũ.' };
+      }
+
+      user.password = newPw;
+      saveUser(user);
+      const db = getUsersDB();
+      if (db[user.email]) {
+        db[user.email].password = newPw;
+        saveUsersDB(db);
+      }
       return { ok: true };
     },
 
     logout() {
-      user = null;
-      localStorage.removeItem(LS);
+      saveUser(null);
     },
 
+    // Quản lý Phim yêu thích
     getFavs() {
-      try { return JSON.parse(localStorage.getItem('lumi_favs') || '[]'); } catch(_) { return []; }
+      const key = userScopedKey(LS_FAV);
+      return readJson(key, []);
     },
-    isFav(slug) { return Auth.getFavs().some(f => f.slug === slug); },
+    isFav(slug) {
+      return this.getFavs().some(f => f.slug === slug);
+    },
     toggleFav(film) {
-      const favs = Auth.getFavs();
+      const favs = this.getFavs();
       const idx = favs.findIndex(f => f.slug === film.slug);
       if (idx >= 0) favs.splice(idx, 1);
-      else favs.unshift({ slug: film.slug, name: film.name, thumb_url: film.thumb_url });
-      localStorage.setItem('lumi_favs', JSON.stringify(favs.slice(0, 100)));
+      else favs.unshift({ slug: film.slug, name: film.name, thumb_url: film.thumb_url || film.poster_url });
+      writeJson(userScopedKey(LS_FAV), favs.slice(0, 100));
     },
+
+    // Quản lý Lịch sử xem phim (Watch History)
+    getHistory() {
+      const key = userScopedKey(LS_HIST);
+      return readJson(key, []);
+    },
+    clearHistory() {
+      const h = this.getHistory();
+      const slugs = [...new Set(h.map(x => x.slug).filter(Boolean))];
+      slugs.forEach(slug => this.clearWatchedBySlug(slug));
+      localStorage.removeItem(userScopedKey(LS_HIST));
+    },
+    removeHistoryItem(slug) {
+      const h = this.getHistory().filter(x => x.slug !== slug);
+      writeJson(userScopedKey(LS_HIST), h);
+      this.clearWatchedBySlug(slug);
+    },
+    addHistory(film, epName, sIdx = 0, eIdx = 0) {
+      let h = this.getHistory();
+      h = h.filter(x => x.slug !== film.slug);
+      h.unshift({
+        slug: film.slug,
+        name: film.name,
+        thumb_url: film.thumb_url || film.poster_url,
+        epName: String(epName),
+        sIdx,
+        eIdx,
+        time: Date.now()
+      });
+      writeJson(userScopedKey(LS_HIST), h.slice(0, 80));
+      this.markWatched(film.slug, epName);
+    },
+    getLastWatched(slug) {
+      return this.getHistory().find(x => x.slug === slug) || null;
+    },
+
+    // Quản lý tập phim đã xem (đánh dấu badge ✓)
+    getWatchedEps() {
+      const key = userScopedKey(LS_WATCHED);
+      return readJson(key, []);
+    },
+    clearWatchedBySlug(slug) {
+      const list = this.getWatchedEps().filter(key => !key.startsWith(`${slug}:`));
+      writeJson(userScopedKey(LS_WATCHED), list);
+    },
+    isEpWatched(slug, epName) {
+      const key = `${slug}:${epName}`;
+      return this.getWatchedEps().includes(key);
+    },
+    markWatched(slug, epName) {
+      const list = this.getWatchedEps();
+      const key = `${slug}:${epName}`;
+      if (!list.includes(key)) {
+        list.push(key);
+        writeJson(userScopedKey(LS_WATCHED), list.slice(-500));
+      }
+    }
   };
 })();
 
 /* ═══════════════════════════════════════════════════════
-   5. HELPERS
+   4. UI HELPERS
 ═══════════════════════════════════════════════════════ */
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 function qs(sel, root = document) { return root.querySelector(sel); }
@@ -203,184 +363,156 @@ function el(tag, cls, html) {
 function debounce(fn, ms) {
   let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
 }
-
-function toast(msg, dur = 2800) {
+function toast(msg, dur = 2600) {
   const t = qs('#toast');
   t.textContent = msg;
   t.classList.remove('hidden');
   clearTimeout(toast._t);
   toast._t = setTimeout(() => t.classList.add('hidden'), dur);
 }
+function timeAgo(ts) {
+  if (!ts) return '';
+  const diff = Math.floor((Date.now() - ts) / 1000);
+  if (diff < 60) return 'Vừa xong';
+  if (diff < 3600) return `${Math.floor(diff / 60)} phút trước`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)} giờ trước`;
+  if (diff < 2592000) return `${Math.floor(diff / 86400)} ngày trước`;
+  return new Date(ts).toLocaleDateString('vi-VN');
+}
 
 function makeSkeletons(n = 8, container) {
   container.innerHTML = '';
   for (let i = 0; i < n; i++) {
-    const c = el('div', 'film-card skeleton');
-    c.innerHTML = `<div class="skeleton-overlay"></div>`;
-    container.appendChild(c);
+    container.innerHTML += `<div class="film-card skeleton"><div class="skeleton-overlay"></div></div>`;
   }
 }
 
-function buildCard(film) {
+function buildCard(film, extraInfo = '') {
   const card = el('div', 'film-card');
   card.dataset.slug = film.slug;
-
-  const ep = film.current_episode || '';
-  const qual = film.quality || '';
-  const lang = film.language || '';
-
+  const ep = extraInfo || film.current_episode || '';
   card.innerHTML = `
-    <img src="${film.thumb_url}" alt="${film.name}" loading="lazy" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 160 240%22><rect fill=%22%231e1e28%22 width=%22160%22 height=%22240%22/><text x=%2280%22 y=%22130%22 text-anchor=%22middle%22 fill=%22%236b6b88%22 font-size=%2240%22>🎬</text></svg>'" />
+    <img src="${film.thumb_url || film.poster_url}" alt="${film.name}" loading="lazy" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 160 240%22><rect fill=%22%231e1e28%22 width=%22160%22 height=%22240%22/><text x=%2280%22 y=%22130%22 text-anchor=%22middle%22 fill=%22%236b6b88%22 font-size=%2240%22>🎬</text></svg>'" />
     <div class="film-card-overlay">
       <div class="film-card-title">${film.name}</div>
       ${ep ? `<div class="film-card-ep">${ep}</div>` : ''}
     </div>
     <div class="film-card-badges">
-      ${qual ? `<span class="badge quality">${qual}</span>` : ''}
-      ${lang ? `<span class="badge lang">${lang}</span>` : ''}
+      ${film.quality ? `<span class="badge quality">${film.quality}</span>` : ''}
+      ${film.language ? `<span class="badge lang">${film.language}</span>` : ''}
     </div>
     <div class="film-card-play"><div class="play-circle">▶</div></div>
   `;
-
   card.addEventListener('click', () => Router.go('detail', { slug: film.slug }));
   return card;
 }
 
 function renderFilms(items, container) {
   container.innerHTML = '';
-  if (!items || !items.length) return false;
+  if (!items?.length) return false;
   items.forEach(f => container.appendChild(buildCard(f)));
   return true;
 }
 
-function buildPagination(current, total, onPage) {
-  const p = qs('#pagination');
-  p.innerHTML = '';
-  if (total <= 1) return;
-
-  const maxVisible = 7;
-  const pages = [];
-
-  if (total <= maxVisible) {
-    for (let i = 1; i <= total; i++) pages.push(i);
-  } else {
-    pages.push(1);
-    const left = Math.max(2, current - 2);
-    const right = Math.min(total - 1, current + 2);
-    if (left > 2) pages.push('…');
-    for (let i = left; i <= right; i++) pages.push(i);
-    if (right < total - 1) pages.push('…');
-    pages.push(total);
-  }
-
-  const prev = el('button', `page-btn${current === 1 ? ' disabled' : ''}`, '‹');
-  prev.disabled = current === 1;
-  prev.addEventListener('click', () => onPage(current - 1));
-  p.appendChild(prev);
-
-  pages.forEach(pg => {
-    if (pg === '…') {
-      p.appendChild(el('span', 'page-ellipsis', '…'));
-    } else {
-      const b = el('button', `page-btn${pg === current ? ' active' : ''}`, String(pg));
-      b.addEventListener('click', () => { if (pg !== current) onPage(pg); });
-      p.appendChild(b);
-    }
-  });
-
-  const next = el('button', `page-btn${current === total ? ' disabled' : ''}`, '›');
-  next.disabled = current === total;
-  next.addEventListener('click', () => onPage(current + 1));
-  p.appendChild(next);
-}
-
 /* ═══════════════════════════════════════════════════════
-   6. THEME
-═══════════════════════════════════════════════════════ */
-const Theme = (() => {
-  const saved = localStorage.getItem('lumi_theme') || 'dark';
-  document.documentElement.dataset.theme = saved;
-
-  function update(t) {
-    document.documentElement.dataset.theme = t;
-    localStorage.setItem('lumi_theme', t);
-    qs('#themeIcon').textContent = t === 'dark' ? '☀' : '☾';
-  }
-
-  update(saved);
-
-  return {
-    toggle() {
-      const cur = document.documentElement.dataset.theme;
-      update(cur === 'dark' ? 'light' : 'dark');
-    }
-  };
-})();
-
-/* ═══════════════════════════════════════════════════════
-   7. ROUTER
+   5. ROUTER
 ═══════════════════════════════════════════════════════ */
 const Router = (() => {
   const pages = {
-    home:    qs('#pageHome'),
-    list:    qs('#pageList'),
-    detail:  qs('#pageDetail'),
-    watch:   qs('#pageWatch'),
+    home: qs('#pageHome'),
+    list: qs('#pageList'),
+    detail: qs('#pageDetail'),
+    watch: qs('#pageWatch')
   };
-
+  const LS_ROUTE = 'lumi_last_route';
   let current = null;
 
   function show(name) {
-    Object.values(pages).forEach(p => p.classList.remove('active'));
+    Object.values(pages).forEach(p => p?.classList.remove('active'));
     pages[name]?.classList.add('active');
     current = name;
     window.scrollTo({ top: 0, behavior: 'smooth' });
+
+    if (name !== 'watch') {
+      const frame = qs('#playerFrame');
+      if (frame && frame.src) frame.src = '';
+    }
   }
 
-  // Highlight nav
   function highlightNav(pageKey) {
-    qsa('.nav-link').forEach(a => {
-      a.classList.toggle('active', a.dataset.page === pageKey);
-    });
+    qsa('.nav-link').forEach(a => a.classList.toggle('active', a.dataset.page === pageKey));
+  }
+
+  function saveRoute(page, params = {}) {
+    try {
+      const payload = { page, params };
+      sessionStorage.setItem(LS_ROUTE, JSON.stringify(payload));
+    } catch {}
+  }
+
+  function restoreRoute() {
+    try {
+      const raw = sessionStorage.getItem(LS_ROUTE);
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+
+  function applyRoute(page, params = {}) {
+    const route = { page, params };
+    saveRoute(page, params);
+    show(page);
+    switch (page) {
+      case 'home':
+        highlightNav('home');
+        Home.init();
+        break;
+      case 'list':
+        highlightNav(params.slug || params.type || '');
+        List.load(params);
+        break;
+      case 'detail':
+        highlightNav('');
+        Detail.load(params.slug);
+        break;
+      case 'watch':
+        highlightNav('');
+        Watch.load(params);
+        break;
+    }
+    return route;
   }
 
   return {
     go(page, params = {}) {
-      show(page);
-      switch (page) {
-        case 'home':
-          highlightNav('home');
-          Home.init();
-          break;
-        case 'list':
-          highlightNav(params.slug || '');
-          List.load(params);
-          break;
-        case 'detail':
-          highlightNav('');
-          Detail.load(params.slug);
-          break;
-        case 'watch':
-          highlightNav('');
-          Watch.load(params);
-          break;
+      applyRoute(page, params);
+      try {
+        history.pushState({ page, params }, '', location.href.split('#')[0]);
+      } catch {}
+    },
+    restore() {
+      const route = history.state || restoreRoute();
+      if (!route) return false;
+      const page = route.page || 'home';
+      const params = route.params || {};
+      if (page === 'watch' && !params.movie) {
+        return false;
       }
+      applyRoute(page, params);
+      return true;
     },
     current: () => current,
   };
 })();
 
 /* ═══════════════════════════════════════════════════════
-   8. HOME PAGE
+   6. HOME MODULE
 ═══════════════════════════════════════════════════════ */
 const Home = (() => {
-  let heroFilms = [];
-  let heroIdx = 0;
-  let heroTimer = null;
-  let heroTouched = false; // track if user touched hero
-  let initialized = false;
+  let heroFilms = [], heroIdx = 0, heroTimer = null, initialized = false;
 
-  // ── Hero ──────────────────────────────────
   function initHero(films) {
     heroFilms = films.slice(0, 8);
     heroIdx = 0;
@@ -397,36 +529,25 @@ const Home = (() => {
   function renderHero(idx) {
     const f = heroFilms[idx];
     if (!f) return;
-    const bg = qs('#heroBg');
-    bg.style.backgroundImage = `url('${f.poster_url || f.thumb_url}')`;
-
-    const cats = getCategoryList(f);
-
+    qs('#heroBg').style.backgroundImage = `url('${f.poster_url || f.thumb_url}')`;
     qs('#heroContent').innerHTML = `
       <div class="hero-badges">
-        ${cats.genre ? `<span class="badge">${cats.genre}</span>` : ''}
         ${f.quality ? `<span class="badge quality">${f.quality}</span>` : ''}
         ${f.language ? `<span class="badge lang">${f.language}</span>` : ''}
+        ${f.year ? `<span class="badge" style="background:var(--blue)">${f.year}</span>` : ''}
       </div>
       <div class="hero-title">${f.name}</div>
       ${f.original_name ? `<div class="hero-original">${f.original_name}</div>` : ''}
-      <div class="hero-desc">${f.description || ''}</div>
+      <div class="hero-desc">${f.description || 'Khám phá bộ phim hấp dẫn với trải nghiệm hình ảnh sắc nét và âm thanh sống động.'}</div>
       <div class="hero-meta-row">
-        ${f.year ? `<div class="hero-meta-item"><strong>${f.year}</strong></div>` : ''}
-        ${f.current_episode ? `<div class="hero-meta-item"><strong>${f.current_episode}</strong></div>` : ''}
-        ${f.time ? `<div class="hero-meta-item">${f.time}</div>` : ''}
+        ${f.current_episode ? `<div class="hero-meta-item">Trạng thái: <strong>${f.current_episode}</strong></div>` : ''}
+        ${f.time ? `<div class="hero-meta-item">Thời lượng: <strong>${f.time}</strong></div>` : ''}
       </div>
       <div class="hero-actions">
         <button class="hero-play-btn" data-slug="${f.slug}">▶ &nbsp; Xem ngay</button>
-        <button class="hero-info-btn" data-slug="${f.slug}">ℹ &nbsp; Chi tiết</button>
       </div>
     `;
-
-    // Bind buttons
-    qs('[data-slug].hero-play-btn', qs('#heroContent'))?.addEventListener('click', () => {
-      Router.go('detail', { slug: f.slug, autoPlay: true });
-    });
-    qs('[data-slug].hero-info-btn', qs('#heroContent'))?.addEventListener('click', () => {
+    qs('.hero-play-btn', qs('#heroContent'))?.addEventListener('click', () => {
       Router.go('detail', { slug: f.slug });
     });
   }
@@ -436,33 +557,31 @@ const Home = (() => {
     d.innerHTML = '';
     heroFilms.forEach((_, i) => {
       const dot = el('div', `hero-dot${i === 0 ? ' active' : ''}`);
-      dot.addEventListener('click', () => {
+      dot.onclick = () => {
         heroIdx = i; renderHero(i); updateDots();
         clearInterval(heroTimer);
         heroTimer = setInterval(() => {
           heroIdx = (heroIdx + 1) % heroFilms.length;
           renderHero(heroIdx); updateDots();
         }, CFG.HERO_INTERVAL);
-      });
+      };
       d.appendChild(dot);
     });
   }
-
   function updateDots() {
     qsa('.hero-dot').forEach((d, i) => d.classList.toggle('active', i === heroIdx));
   }
 
-  // ── Rows ──────────────────────────────────
-  async function loadRow(fetchFn, containerId, slug) {
-    const container = qs(`#${containerId}`);
-    makeSkeletons(CFG.ITEMS_PER_HOME_ROW, container);
+  async function loadRow(fetchFn, containerId) {
+    const c = qs(`#${containerId}`);
+    makeSkeletons(CFG.ITEMS_PER_HOME_ROW, c);
     try {
       const data = await fetchFn;
       const items = (data.items || []).slice(0, CFG.ITEMS_PER_HOME_ROW);
-      renderFilms(items, container);
+      renderFilms(items, c);
       return items;
-    } catch (e) {
-      container.innerHTML = `<div style="color:var(--text3);font-size:13px;padding:20px">Không tải được nội dung. <button onclick="Home.init()" style="color:var(--accent);background:none;border:none;cursor:pointer;font-size:13px">Thử lại</button></div>`;
+    } catch {
+      c.innerHTML = `<div style="padding:20px;color:var(--text3)">Lỗi kết nối máy chủ.</div>`;
       return [];
     }
   }
@@ -471,627 +590,1055 @@ const Home = (() => {
     async init() {
       if (initialized) return;
       initialized = true;
-
-      // Load all rows in parallel — allSettled so one error won't block the rest
-      const results = await Promise.allSettled([
-        loadRow(API.newUpdated(1), 'rowNew', 'new'),
-        loadRow(API.listBySlug('phim-le', 1), 'rowPhimLe', 'phim-le'),
-        loadRow(API.listBySlug('phim-bo', 1), 'rowPhimBo', 'phim-bo'),
-        loadRow(API.listBySlug('phim-chieu-rap', 1), 'rowRap', 'phim-chieu-rap'),
+      const res = await Promise.allSettled([
+        loadRow(API.newUpdated(1), 'rowNew'),
+        loadRow(API.listBySlug('phim-le', 1), 'rowPhimLe'),
+        loadRow(API.listBySlug('phim-bo', 1), 'rowPhimBo'),
+        loadRow(API.listBySlug('phim-chieu-rap', 1), 'rowRap'),
       ]);
-
-      // Hero from new films
-      const newResult = results[0];
-      if (newResult.status === 'fulfilled' && newResult.value?.length) {
-        initHero(newResult.value);
+      if (res[0].status === 'fulfilled' && res[0].value?.length) {
+        initHero(res[0].value);
       }
-
-      // Load filter options
-      FilterBar.init();
     },
-    reset() { initialized = false; },
+    reset() { initialized = false; }
   };
 })();
 
 /* ═══════════════════════════════════════════════════════
-   9. FILTER BAR (dropdown options)
-═══════════════════════════════════════════════════════ */
-const FilterBar = (() => {
-  const GENRES = [
-    {v:'hanh-dong',l:'Hành Động'},{v:'tinh-cam',l:'Tình Cảm'},{v:'hai-huoc',l:'Hài Hước'},
-    {v:'co-trang',l:'Cổ Trang'},{v:'tam-ly',l:'Tâm Lý'},{v:'kinh-di',l:'Kinh Dị'},
-    {v:'vien-tuong',l:'Viễn Tưởng'},{v:'phieu-luu',l:'Phiêu Lưu'},{v:'hoat-hinh',l:'Hoạt Hình'},
-    {v:'tai-lieu',l:'Tài Liệu'},{v:'am-nhac',l:'Âm Nhạc'},{v:'the-thao',l:'Thể Thao'},
-    {v:'bi-an',l:'Bí Ẩn'},{v:'chien-tranh',l:'Chiến Tranh'},{v:'lich-su',l:'Lịch Sử'},
-    {v:'gia-dinh',l:'Gia Đình'},{v:'vo-thuat',l:'Võ Thuật'},{v:'kinh-dien',l:'Kinh Điển'},
-    {v:'the-gioi-dong-vat',l:'Thế Giới Động Vật'},
-  ];
-  const COUNTRIES = [
-    {v:'my',l:'Mỹ'},{v:'han-quoc',l:'Hàn Quốc'},{v:'trung-quoc',l:'Trung Quốc'},
-    {v:'nhat-ban',l:'Nhật Bản'},{v:'thai-lan',l:'Thái Lan'},{v:'phap',l:'Pháp'},
-    {v:'anh',l:'Anh'},{v:'an-do',l:'Ấn Độ'},{v:'viet-nam',l:'Việt Nam'},
-    {v:'hong-kong',l:'Hong Kong'},{v:'dai-loan',l:'Đài Loan'},{v:'duc',l:'Đức'},
-    {v:'tay-ban-nha',l:'Tây Ban Nha'},{v:'y',l:'Ý'},{v:'uc',l:'Úc'},
-    {v:'canada',l:'Canada'},{v:'philippines',l:'Philippines'},
-  ];
-  const LANGS = [
-    {v:'vietsub',l:'Vietsub'},{v:'thuyet-minh',l:'Thuyết minh'},{v:'long-tieng',l:'Lồng tiếng'},
-  ];
-
-  function fillSelect(selId, opts) {
-    const sel = qs(`#${selId}`);
-    opts.forEach(o => {
-      const opt = document.createElement('option');
-      opt.value = o.v; opt.textContent = o.l;
-      sel.appendChild(opt);
-    });
-  }
-
-  // Fill year from 2010 to current
-  function fillYears() {
-    const sel = qs('#filterYear');
-    const cur = new Date().getFullYear();
-    for (let y = cur; y >= 2010; y--) {
-      const o = document.createElement('option');
-      o.value = y; o.textContent = y;
-      sel.appendChild(o);
-    }
-  }
-
-  let inited = false;
-  return {
-    init() {
-      if (inited) return; inited = true;
-      fillSelect('filterGenre', GENRES);
-      fillSelect('filterCountry', COUNTRIES);
-      fillSelect('filterLang', LANGS);
-      fillYears();
-    },
-    getGenres: () => GENRES,
-    getCountries: () => COUNTRIES,
-  };
-})();
-
-/* ═══════════════════════════════════════════════════════
-   10. LIST PAGE
+   7. LIST MODULE
 ═══════════════════════════════════════════════════════ */
 const List = (() => {
-  let state = {};
+  const FILTER_PAGE_SIZE = 18;
+  const FILTER_REQUEST_CONCURRENCY = 4;
+  const filteredResults = new Map();
 
-  const LABELS = {
-    'new': 'Mới cập nhật',
-    'phim-le': 'Phim lẻ',
-    'phim-bo': 'Phim bộ',
-    'phim-chieu-rap': 'Chiếu rạp',
-    'hoat-hinh': 'Hoạt hình',
-  };
-
-  async function fetchPage(params, page) {
-    const { type, slug, keyword, genre, country, year, lang, _favs } = params;
-    if (_favs)   return { items: _favs, paginate: { current_page: 1, total_page: 1 } };
-    if (keyword) return API.search(keyword);
-    if (genre)   return API.byGenre(genre, page);
-    if (country) return API.byCountry(country, page);
-    if (year)    return API.byYear(year, page);
-    if (lang)    return API.byLang(lang, page);
-    if (type === 'new') return API.newUpdated(page);
-    return API.listBySlug(slug || type, page);
+  function slugify(v) {
+    return String(v || '')
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
   }
 
-  function getTitle(params) {
-    if (params.title) return params.title;
-    if (params.keyword) return `Kết quả: "${params.keyword}"`;
-    return LABELS[params.slug || params.type] || 'Danh sách phim';
+  function getCategoryNames(item) {
+    const cats = [];
+    const groups = item?.category ? Object.values(item.category) : [];
+    groups.forEach(group => {
+      const arr = Array.isArray(group?.list) ? group.list : [];
+      arr.forEach(x => {
+        if (x && x.name) cats.push(x.name);
+      });
+    });
+    return cats;
   }
 
-  async function render(params, page = 1) {
-    state = { params, page };
+  function matchesFilters(item, p) {
+    const genre = p.genre ? slugify(p.genre) : '';
+    const country = p.country ? slugify(p.country) : '';
+    const year = p.year ? String(p.year) : '';
+    const lang = p.lang ? slugify(p.lang) : '';
 
-    const grid = qs('#filmGrid');
-    const empty = qs('#emptyState');
-    const pagi = qs('#pagination');
-    empty.classList.add('hidden');
-    pagi.innerHTML = '';
-    makeSkeletons(24, grid);
-
-    qs('#listTitle').textContent = getTitle(params);
-    qs('#listMeta').textContent = '';
-
-    try {
-      const data = await fetchPage(params, page);
-      const items = data.items || [];
-
-      if (!items.length) {
-        grid.innerHTML = '';
-        empty.classList.remove('hidden');
-        return;
-      }
-
-      const pg = data.paginate || {};
-      const totalPage = pg.total_page || 1;
-      const totalItems = pg.total_items || items.length;
-
-      qs('#listMeta').textContent = `${totalItems.toLocaleString()} phim · Trang ${page}/${totalPage}`;
-      renderFilms(items, grid);
-
-      // Only show pagination if not search (search returns all results at once)
-      if (!params.keyword) {
-        buildPagination(page, totalPage, (p) => render(params, p));
-      }
-    } catch (e) {
-      grid.innerHTML = `
-        <div style="grid-column:1/-1;text-align:center;padding:60px 20px;color:var(--text3)">
-          <div style="font-size:40px;margin-bottom:14px">📡</div>
-          <h3 style="color:var(--text);margin-bottom:8px">Không thể tải phim</h3>
-          <p>Kiểm tra kết nối và thử lại.</p>
-          <button onclick="List.reload()" style="margin-top:16px;padding:10px 22px;border-radius:8px;background:var(--accent);color:#fff;border:none;cursor:pointer;font-weight:600">Thử lại</button>
-        </div>`;
+    if (genre) {
+      const ok = getCategoryNames(item).some(name => slugify(name) === genre);
+      if (!ok) return false;
     }
+    if (country) {
+      const ok = getCategoryNames(item).some(name => slugify(name) === country);
+      if (!ok) return false;
+    }
+    if (year) {
+      const itemYear = String(item?.year || '').trim();
+      if (!itemYear || itemYear !== year) return false;
+    }
+    if (lang) {
+      const itemLang = slugify(item?.language || '');
+      if (itemLang !== lang) return false;
+    }
+    return true;
+  }
+
+  function getFilterSources(p) {
+    return [
+      p.genre && { load: page => API.byGenre(p.genre, page) },
+      p.country && { load: page => API.byCountry(p.country, page) },
+      p.year && { load: page => API.byYear(p.year, page) },
+      p.lang && { load: page => API.byLang(p.lang, page) },
+    ].filter(Boolean);
+  }
+
+  async function getFilteredState(p) {
+    const cacheKey = JSON.stringify({
+      genre: p.genre || '', country: p.country || '', year: p.year || '', lang: p.lang || ''
+    });
+    if (filteredResults.has(cacheKey)) return filteredResults.get(cacheKey);
+
+    // Danh sách tóm tắt từ API không chứa category. Tải trang đầu của từng
+    // tiêu chí để chọn nguồn có ít ứng viên nhất, sau đó chỉ truy vấn chi tiết
+    // của các phim cần đối chiếu. Điều này tránh tải toàn bộ mọi danh sách.
+    const firstPages = await Promise.all(getFilterSources(p).map(source => source.load(1)));
+    const sourceIndex = firstPages.reduce((best, data, index) => {
+      const total = Number(data.paginate?.total_items) || Infinity;
+      const bestTotal = Number(firstPages[best].paginate?.total_items) || Infinity;
+      return total < bestTotal ? index : best;
+    }, 0);
+
+    const state = {
+      source: getFilterSources(p)[sourceIndex],
+      firstPage: firstPages[sourceIndex],
+      nextSourcePage: 1,
+      totalSourcePages: Math.max(1, Number(firstPages[sourceIndex].paginate?.total_page) || 1),
+      items: [],
+      exhausted: false,
+    };
+    filteredResults.set(cacheKey, state);
+    return state;
+  }
+
+  async function enrichAndMatch(items, p) {
+    const matched = [];
+    for (let start = 0; start < items.length; start += FILTER_REQUEST_CONCURRENCY) {
+      const batch = items.slice(start, start + FILTER_REQUEST_CONCURRENCY);
+      const details = await Promise.all(batch.map(async item => {
+        try {
+          const data = await API.detail(item.slug);
+          return { ...item, ...(data.movie || data) };
+        } catch {
+          return item;
+        }
+      }));
+      matched.push(...details.filter(item => matchesFilters(item, p)));
+    }
+    return matched;
+  }
+
+  async function fetchFilteredPage(p, page) {
+    const state = await getFilteredState(p);
+    const targetCount = page * FILTER_PAGE_SIZE;
+
+    while (!state.exhausted && state.items.length < targetCount) {
+      const sourcePage = state.nextSourcePage === 1
+        ? state.firstPage
+        : await state.source.load(state.nextSourcePage);
+      state.nextSourcePage++;
+      state.items.push(...await enrichAndMatch(sourcePage.items || [], p));
+      if (state.nextSourcePage > state.totalSourcePages) state.exhausted = true;
+    }
+
+    const start = (page - 1) * FILTER_PAGE_SIZE;
+    return {
+      items: state.items.slice(start, start + FILTER_PAGE_SIZE),
+      paginate: {
+        current_page: page,
+        // Khi chưa quét hết, giữ thêm một trang để người dùng tiếp tục tìm.
+        total_page: state.exhausted
+          ? Math.max(1, Math.ceil(state.items.length / FILTER_PAGE_SIZE))
+          : Math.max(page + 1, Math.ceil(state.items.length / FILTER_PAGE_SIZE) + 1),
+        total_items: state.exhausted ? state.items.length : null,
+      }
+    };
+  }
+
+  async function fetchPage(p, page) {
+    if (p._favs) return { items: p._favs, paginate: { current_page: 1, total_page: 1 } };
+    if (p.keyword) return API.search(p.keyword);
+
+    const filterCount = [p.genre, p.country, p.year, p.lang].filter(Boolean).length;
+    if (filterCount > 1) {
+      return fetchFilteredPage(p, page);
+    }
+
+    if (p.genre) return API.byGenre(p.genre, page);
+    if (p.country) return API.byCountry(p.country, page);
+    if (p.year) return API.byYear(p.year, page);
+    if (p.lang) return API.byLang(p.lang, page);
+    if (p.type === 'new') return API.newUpdated(page);
+    return API.listBySlug(p.slug || p.type, page);
+  }
+
+  function getTitle(p) {
+    const l = {
+      'new': 'Phim Mới Cập Nhật',
+      'phim-le': 'Danh Sách Phim Lẻ',
+      'phim-bo': 'Danh Sách Phim Bộ',
+      'phim-chieu-rap': 'Phim Chiếu Rạp'
+    };
+    return p.title || (p.keyword ? `Kết quả tìm kiếm: "${p.keyword}"` : l[p.slug || p.type] || 'Danh sách phim');
   }
 
   return {
-    load(params) { render(params, params.page || 1); },
-    reload() { render(state.params, state.page); },
+    async load(params, page = 1) {
+      const grid = qs('#filmGrid'), empty = qs('#emptyState'), pagi = qs('#pagination');
+      empty.classList.add('hidden');
+      pagi.innerHTML = '';
+      makeSkeletons(18, grid);
+      qs('#listTitle').textContent = getTitle(params);
+      qs('#listMeta').textContent = 'Đang tải dữ liệu...';
+
+      try {
+        const data = await fetchPage(params, page);
+        const items = data.items || [];
+        if (!items.length) {
+          grid.innerHTML = '';
+          empty.classList.remove('hidden');
+          qs('#listMeta').textContent = '0 phim';
+          return;
+        }
+
+        const pg = data.paginate || {};
+        const tot = pg.total_page || 1;
+        const totalLabel = pg.total_items == null
+          ? 'Đang tìm thêm kết quả'
+          : `${pg.total_items.toLocaleString()} phim`;
+        qs('#listMeta').textContent = `${totalLabel} · Trang ${page}/${tot}`;
+        renderFilms(items, grid);
+
+        // Render pagination
+        if (!params.keyword && !params._favs && tot > 1) {
+          const start = Math.max(1, page - 2);
+          const end = Math.min(tot, page + 2);
+          if (page > 1) {
+            const prev = el('button', 'page-btn', '‹');
+            prev.onclick = () => List.load(params, page - 1);
+            pagi.appendChild(prev);
+          }
+          for (let i = start; i <= end; i++) {
+            const b = el('button', `page-btn ${i === page ? 'active' : ''}`, i);
+            b.onclick = () => List.load(params, i);
+            pagi.appendChild(b);
+          }
+          if (page < tot) {
+            const next = el('button', 'page-btn', '›');
+            next.onclick = () => List.load(params, page + 1);
+            pagi.appendChild(next);
+          }
+        }
+      } catch {
+        grid.innerHTML = `<div style="text-align:center;padding:60px;grid-column:1/-1;color:var(--text3)">Không thể kết nối máy chủ phim. Vui lòng thử lại sau.</div>`;
+      }
+    }
   };
 })();
 
 /* ═══════════════════════════════════════════════════════
-   11. DETAIL PAGE
+   8. DETAIL MODULE (Chi tiết phim & Danh sách tập trực quan)
 ═══════════════════════════════════════════════════════ */
 const Detail = (() => {
-  let currentFilm = null;
-
-  function getCats(movie) {
-    const result = { format: [], genre: [], year: [], country: [] };
-    const cat = movie.category || {};
-    Object.values(cat).forEach(c => {
-      const grp = c.group?.name?.toLowerCase() || '';
-      const list = c.list?.map(x => x.name) || [];
-      if (grp.includes('định dạng') || grp.includes('format')) result.format = list;
-      else if (grp.includes('thể loại') || grp.includes('genre')) result.genre = list;
-      else if (grp.includes('năm') || grp.includes('year')) result.year = list;
-      else if (grp.includes('quốc') || grp.includes('country')) result.country = list;
-    });
-    return result;
-  }
-
-  function renderCatTags(cats, type) {
-    const items = cats[type] || [];
-    if (!items.length) return '';
-    const map = { genre: 'the-loai', country: 'quoc-gia', year: 'nam-phat-hanh' };
-    return items.map(n => {
-      const slug = toSlug(n);
-      return `<span class="cat-tag" data-filter="${type}" data-slug="${slug}" data-name="${n}">${n}</span>`;
-    }).join('');
-  }
-
-  async function load(slug) {
-    const container = qs('#detailContent');
-    container.innerHTML = `<div style="padding:40px 0;text-align:center;color:var(--text3)">
-      <div class="skeleton-box" style="width:200px;height:300px;margin:0 auto 24px"></div>
-      <div class="skeleton-box" style="width:60%;height:28px;margin:0 auto 12px"></div>
-      <div class="skeleton-box" style="width:40%;height:16px;margin:0 auto"></div>
-    </div>`;
-
-    try {
-      const data = await API.detail(slug);
-      const movie = data.movie;
-      currentFilm = movie;
-      const cats = getCats(movie);
-      const isFav = Auth.isFav(slug);
-
-      container.innerHTML = `
-        <div class="detail-hero">
-          <div class="detail-poster">
-            <img src="${movie.poster_url || movie.thumb_url}" alt="${movie.name}" onerror="this.src='${movie.thumb_url}'" />
-          </div>
-          <div class="detail-info">
-            <div class="detail-badges">
-              ${cats.format.map(f => `<span class="badge">${f}</span>`).join('')}
-              ${movie.quality ? `<span class="badge quality">${movie.quality}</span>` : ''}
-              ${movie.language ? `<span class="badge lang">${movie.language}</span>` : ''}
-            </div>
-            <div class="detail-title">${movie.name}</div>
-            ${movie.original_name ? `<div class="detail-original">${movie.original_name}</div>` : ''}
-            <div class="detail-meta">
-              ${movie.year ? `<div class="meta-item"><span class="meta-label">Năm</span><span class="meta-value">${movie.year}</span></div>` : ''}
-              ${movie.current_episode ? `<div class="meta-item"><span class="meta-label">Tập hiện tại</span><span class="meta-value">${movie.current_episode}</span></div>` : ''}
-              ${movie.total_episodes ? `<div class="meta-item"><span class="meta-label">Tổng tập</span><span class="meta-value">${movie.total_episodes}</span></div>` : ''}
-              ${movie.time ? `<div class="meta-item"><span class="meta-label">Thời lượng</span><span class="meta-value">${movie.time}</span></div>` : ''}
-              ${movie.director ? `<div class="meta-item"><span class="meta-label">Đạo diễn</span><span class="meta-value">${movie.director}</span></div>` : ''}
-              ${movie.casts ? `<div class="meta-item" style="grid-column:1/-1"><span class="meta-label">Diễn viên</span><span class="meta-value">${movie.casts}</span></div>` : ''}
-            </div>
-            ${movie.description ? `<div class="detail-desc">${movie.description}</div>` : ''}
-            <div class="detail-actions">
-              <button class="watch-btn" id="watchNowBtn">▶ &nbsp; Xem ngay</button>
-              <button class="fav-btn ${isFav ? 'active' : ''}" id="favBtn">${isFav ? '♥' : '♡'} &nbsp; ${isFav ? 'Đã yêu thích' : 'Yêu thích'}</button>
-            </div>
-            <div>
-              ${cats.genre.length ? `<div style="margin-bottom:8px"><span class="meta-label" style="display:inline;margin-right:8px">Thể loại:</span><span class="cat-tags">${renderCatTags(cats,'genre')}</span></div>` : ''}
-              ${cats.country.length ? `<div style="margin-bottom:8px"><span class="meta-label" style="display:inline;margin-right:8px">Quốc gia:</span><span class="cat-tags">${renderCatTags(cats,'country')}</span></div>` : ''}
-              ${cats.year.length ? `<div><span class="meta-label" style="display:inline;margin-right:8px">Năm:</span><span class="cat-tags">${renderCatTags(cats,'year')}</span></div>` : ''}
-            </div>
-          </div>
+  return {
+    async load(slug) {
+      const c = qs('#detailContent');
+      c.innerHTML = `
+        <div style="display:flex;justify-content:center;padding:80px 0">
+          <div class="skeleton-box" style="width:240px;height:340px;border-radius:16px"></div>
         </div>
       `;
 
-      // Watch Now
-      qs('#watchNowBtn').addEventListener('click', () => {
-        const eps = movie.episodes || [];
-        const server = eps[0];
-        if (!server || !server.items?.length) { toast('Chưa có tập phim nào.'); return; }
-        const firstEp = server.items[0];
-        Router.go('watch', { movie, serverIdx: 0, epIdx: 0, embed: firstEp.embed });
-      });
+      try {
+        const data = await API.detail(slug);
+        const m = data.movie;
+        const isFav = Auth.isFav(slug);
+        const lastWatched = Auth.getLastWatched(slug);
 
-      // Fav
-      qs('#favBtn').addEventListener('click', () => {
-        if (!Auth.isLoggedIn()) { toast('Đăng nhập để lưu phim yêu thích!'); openAuth(); return; }
-        Auth.toggleFav(movie);
-        const f = Auth.isFav(slug);
-        const btn = qs('#favBtn');
-        btn.innerHTML = `${f ? '♥' : '♡'} &nbsp; ${f ? 'Đã yêu thích' : 'Yêu thích'}`;
-        btn.classList.toggle('active', f);
-        toast(f ? 'Đã thêm vào yêu thích!' : 'Đã xoá khỏi yêu thích');
-      });
+        // Nút xem: Nếu đã có lịch sử thì hiện "Xem tiếp Tập X", chưa thì hiện "Xem ngay"
+        const watchBtnText = lastWatched ? `▶ &nbsp; Xem tiếp: Tập ${lastWatched.epName}` : `▶ &nbsp; Xem Tập 1`;
 
-      // Cat tags click
-      qsa('.cat-tag', container).forEach(tag => {
-        tag.addEventListener('click', () => {
-          const filter = tag.dataset.filter;
-          const slug2 = tag.dataset.slug;
-          const name = tag.dataset.name;
-          const params = {};
-          if (filter === 'genre') params.genre = slug2;
-          else if (filter === 'country') params.country = slug2;
-          else if (filter === 'year') params.year = slug2;
-          params.title = name;
-          Router.go('list', params);
-        });
-      });
+        // Trích xuất thể loại và quốc gia
+        let genres = [], countries = [];
+        if (m.category) {
+          Object.values(m.category).forEach(cat => {
+            const gName = cat.group?.name?.toLowerCase() || '';
+            if (gName.includes('thể loại')) genres = cat.list || [];
+            if (gName.includes('quốc gia')) countries = cat.list || [];
+          });
+        }
+        const tagHTML = (k, arr) => arr?.length ? `
+          <div style="margin-bottom:6px">
+            <span class="meta-label" style="display:inline;margin-right:8px">${k}:</span>
+            <span class="cat-tags">${arr.map(x => `<span class="cat-tag">${x.name}</span>`).join('')}</span>
+          </div>` : '';
 
-    } catch (e) {
-      container.innerHTML = `<div style="text-align:center;padding:60px 20px;color:var(--text3)">
-        <div style="font-size:40px;margin-bottom:14px">⚠</div>
-        <h3 style="color:var(--text)">Không tải được thông tin phim</h3>
-        <button onclick="Detail.load('${slug}')" style="margin-top:16px;padding:10px 22px;border-radius:8px;background:var(--accent);color:#fff;border:none;cursor:pointer;font-weight:600">Thử lại</button>
-      </div>`;
+        // Xây dựng danh sách các tập phim trực quan ngay tại trang chi tiết
+        const episodes = m.episodes || [];
+        const hasEps = episodes.length > 0 && episodes[0].items?.length > 0;
+        let episodesSectionHTML = '';
+
+        if (hasEps) {
+          const firstServer = episodes[0];
+          episodesSectionHTML = `
+            <div class="detail-episodes-section">
+              <div class="detail-episodes-head">
+                <div>
+                  <h3>📑 Danh sách tập phim (${firstServer.items.length} tập)</h3>
+                  <span style="font-size:12px;color:var(--text3)">Nhấp trực tiếp vào tập mong muốn để phát ngay lập tức:</span>
+                </div>
+                <div class="detail-server-tabs" id="detailServerTabs">
+                  ${episodes.map((s, idx) => `<button class="server-tab ${idx === 0 ? 'active' : ''}" data-sidx="${idx}">${s.server_name}</button>`).join('')}
+                </div>
+              </div>
+              <div class="detail-ep-grid" id="detailEpGrid">
+                ${firstServer.items.map((ep, eIdx) => {
+                  const watched = Auth.isEpWatched(m.slug, ep.name) ? 'watched' : '';
+                  return `<button class="detail-ep-btn ${watched}" data-sidx="0" data-eidx="${eIdx}" title="Tập ${ep.name}">Tập ${ep.name}</button>`;
+                }).join('')}
+              </div>
+            </div>
+          `;
+        }
+
+        c.innerHTML = `
+          <div class="detail-hero">
+            <div class="detail-poster">
+              <img src="${m.poster_url || m.thumb_url}" alt="${m.name}" />
+            </div>
+            <div class="detail-info">
+              <h1 class="detail-title">${m.name}</h1>
+              ${m.original_name ? `<div class="detail-original">${m.original_name}</div>` : ''}
+              <div class="detail-meta">
+                ${m.year ? `<div class="meta-item"><span class="meta-label">Năm phát hành</span><span class="meta-value">${m.year}</span></div>` : ''}
+                ${m.current_episode ? `<div class="meta-item"><span class="meta-label">Tình trạng</span><span class="meta-value">${m.current_episode}</span></div>` : ''}
+                ${m.time ? `<div class="meta-item"><span class="meta-label">Thời lượng</span><span class="meta-value">${m.time}</span></div>` : ''}
+                ${m.quality ? `<div class="meta-item"><span class="meta-label">Chất lượng</span><span class="meta-value">${m.quality}</span></div>` : ''}
+              </div>
+              <div class="detail-desc">${m.description || 'Bộ phim đang được cập nhật thông tin chi tiết.'}</div>
+              
+              <div class="detail-actions">
+                <button class="watch-btn" id="watchNowBtn">${watchBtnText}</button>
+                <button class="fav-btn ${isFav ? 'active' : ''}" id="favBtn">${isFav ? '♥ &nbsp; Đã yêu thích' : '♡ &nbsp; Yêu thích'}</button>
+              </div>
+
+              <div style="margin-top:14px">
+                ${tagHTML('Thể loại', genres)}
+                ${tagHTML('Quốc gia', countries)}
+              </div>
+            </div>
+          </div>
+
+          ${episodesSectionHTML}
+        `;
+
+        // Xử lý nút xem chính
+        qs('#watchNowBtn').onclick = () => {
+          if (!hasEps) return toast('Chưa có nguồn tập phim khả dụng.');
+          if (lastWatched) {
+            // Xem tiếp từ lịch sử
+            const sIdx = lastWatched.sIdx || 0;
+            const eIdx = lastWatched.eIdx || 0;
+            const srv = episodes[sIdx] || episodes[0];
+            const ep = srv.items[eIdx] || srv.items[0];
+            Router.go('watch', { movie: m, serverIdx: sIdx, epIdx: eIdx, embed: ep.embed });
+          } else {
+            // Xem tập đầu tiên
+            Router.go('watch', { movie: m, serverIdx: 0, epIdx: 0, embed: episodes[0].items[0].embed });
+          }
+        };
+
+        // Nút yêu thích
+        qs('#favBtn').onclick = () => {
+          if (!Auth.isLoggedIn()) {
+            openAuthModal('login');
+            toast('Vui lòng đăng nhập để lưu phim yêu thích!');
+            return;
+          }
+          Auth.toggleFav(m);
+          const f = Auth.isFav(slug);
+          qs('#favBtn').className = `fav-btn ${f ? 'active' : ''}`;
+          qs('#favBtn').innerHTML = f ? '♥ &nbsp; Đã yêu thích' : '♡ &nbsp; Yêu thích';
+          toast(f ? 'Đã thêm vào danh sách yêu thích!' : 'Đã xoá khỏi danh sách yêu thích.');
+        };
+
+        // Bắt sự kiện click vào các tập trên giao diện Detail
+        if (hasEps) {
+          const sTabs = qsa('.server-tab', qs('#detailServerTabs'));
+          const epGrid = qs('#detailEpGrid');
+
+          function renderDetailServer(sIdx) {
+            sTabs.forEach((t, i) => t.classList.toggle('active', i === sIdx));
+            const srv = episodes[sIdx];
+            epGrid.innerHTML = srv.items.map((ep, eIdx) => {
+              const watched = Auth.isEpWatched(m.slug, ep.name) ? 'watched' : '';
+              return `<button class="detail-ep-btn ${watched}" data-sidx="${sIdx}" data-eidx="${eIdx}" title="Tập ${ep.name}">Tập ${ep.name}</button>`;
+            }).join('');
+            bindDetailEpButtons();
+          }
+
+          function bindDetailEpButtons() {
+            qsa('.detail-ep-btn', epGrid).forEach(btn => {
+              btn.onclick = () => {
+                const sIdx = parseInt(btn.dataset.sidx);
+                const eIdx = parseInt(btn.dataset.eidx);
+                const embed = episodes[sIdx].items[eIdx].embed;
+                Router.go('watch', { movie: m, serverIdx: sIdx, epIdx: eIdx, embed });
+              };
+            });
+          }
+
+          sTabs.forEach((t, idx) => {
+            t.onclick = () => renderDetailServer(idx);
+          });
+          bindDetailEpButtons();
+        }
+
+      } catch {
+        c.innerHTML = `
+          <div style="text-align:center;padding:60px 20px;color:var(--text3)">
+            <div style="font-size:42px;margin-bottom:12px">⚠</div>
+            <h3>Không thể tải thông tin phim</h3>
+            <p>Vui lòng kiểm tra lại kết nối mạng hoặc thử lại sau.</p>
+          </div>
+        `;
+      }
     }
-  }
-
-  return {
-    load,
-    current: () => currentFilm,
   };
 })();
 
 /* ═══════════════════════════════════════════════════════
-   12. WATCH PAGE
+   10. WATCH MODULE (Next/Prev, lưu lịch sử & đánh dấu tập đã xem)
 ═══════════════════════════════════════════════════════ */
 const Watch = (() => {
-  let state = {};
+  let state = {
+    movie: null,
+    serverIdx: 0,
+    epIdx: 0,
+  };
 
-  function load({ movie, serverIdx = 0, epIdx = 0 }) {
-    state = { movie, serverIdx, epIdx };
-    const eps = movie.episodes || [];
-    if (!eps.length) { toast('Chưa có nguồn phim.'); Router.go('detail', { slug: movie.slug }); return; }
-
-    // Build server tabs
-    const serverTabs = qs('#serverTabs');
-    serverTabs.innerHTML = '';
-    eps.forEach((srv, si) => {
-      const t = el('button', `server-tab${si === serverIdx ? ' active' : ''}`, srv.server_name);
-      t.addEventListener('click', () => loadServer(si, 0));
-      serverTabs.appendChild(t);
-    });
-
-    loadServer(serverIdx, epIdx);
-  }
-
-  function loadServer(si, ei) {
-    state.serverIdx = si; state.epIdx = ei;
+  // Cập nhật điều hướng Next / Prev
+  function updateControlsUI(si, ei) {
     const eps = state.movie.episodes || [];
     const server = eps[si];
-    if (!server) return;
+    if (!server || !server.items) return;
+    const items = server.items;
 
-    // Highlight server tabs
-    qsa('.server-tab').forEach((t, i) => t.classList.toggle('active', i === si));
+    const btnPrev = qs('#prevEpBtn');
+    const btnNext = qs('#nextEpBtn');
+    btnPrev.disabled = ei <= 0;
+    btnNext.disabled = ei >= items.length - 1;
+  }
 
-    // Build ep grid
+  // Tải một tập phim
+  function loadEp(si, ei, embed) {
+    state.serverIdx = si;
+    state.epIdx = ei;
+
+    const server = state.movie.episodes[si];
+    const ep = server?.items?.[ei];
+    if (!ep) return;
+
+    // Cập nhật tiêu đề
+    qs('#playerTitle').textContent = `${state.movie.name} — Tập ${ep.name}`;
+    qs('#playerSubtitle').textContent = `Máy chủ: ${server.server_name} · Tốc độ tải ưu tiên cao`;
+
+    // Tối ưu Iframe: Không tái tạo thẻ, chỉ thay src nếu khác để tua/đổi tập mượt mà
+    const iframe = qs('#playerFrame');
+    const loader = qs('#playerLoader');
+
+    if (iframe.src !== embed) {
+      loader?.classList.remove('hidden');
+      iframe.src = embed;
+      iframe.onload = () => {
+        loader?.classList.add('hidden');
+      };
+      // Timeout fallback phòng khi iframe không bắn onload
+      setTimeout(() => loader?.classList.add('hidden'), 1500);
+    }
+
+    // Tự động lưu vào lịch sử xem & đánh dấu tập đã xem
+    Auth.addHistory(state.movie, ep.name, si, ei);
+    // Cập nhật trạng thái active trên danh sách tập ở Sidebar
+    qsa('.ep-btn').forEach((b, idx) => {
+      b.classList.toggle('active', idx === ei);
+      if (Auth.isEpWatched(state.movie.slug, state.movie.episodes[si].items[idx].name)) {
+        b.classList.add('watched');
+      }
+    });
+    const activeSidebarBtn = qs('.ep-btn.active');
+    activeSidebarBtn?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+    updateControlsUI(si, ei);
+    toast(`Đang phát: Tập ${ep.name}`);
+  }
+
+  function loadServer(si, ei = 0) {
+    state.serverIdx = si;
+    const eps = state.movie.episodes || [];
+    if (!eps[si]) return;
+
+    qsa('.server-tab', qs('#serverTabs')).forEach((t, i) => t.classList.toggle('active', i === si));
+
     const grid = qs('#epGrid');
-    grid.innerHTML = '';
-    (server.items || []).forEach((ep, idx) => {
-      const b = el('button', `ep-btn${idx === ei ? ' active' : ''}`, ep.name);
-      b.title = ep.name;
-      b.addEventListener('click', () => loadEp(si, idx, ep.embed));
-      grid.appendChild(b);
+    grid.innerHTML = eps[si].items.map((ep, idx) => {
+      const isCur = idx === ei ? 'active' : '';
+      const isWatched = Auth.isEpWatched(state.movie.slug, ep.name) ? 'watched' : '';
+      return `<button class="ep-btn ${isCur} ${isWatched}" data-ei="${idx}" title="Tập ${ep.name}">${ep.name}</button>`;
+    }).join('');
+
+    qsa('.ep-btn', grid).forEach(b => {
+      b.onclick = () => {
+        const idx = parseInt(b.dataset.ei);
+        loadEp(si, idx, eps[si].items[idx].embed);
+      };
     });
 
-    // Scroll active ep into view
-    const activeBtn = qs('.ep-btn.active', grid);
-    activeBtn?.scrollIntoView({ block: 'nearest' });
-
-    const ep = server.items[ei];
-    if (ep) loadEp(si, ei, ep.embed);
+    if (eps[si].items[ei]) {
+      loadEp(si, ei, eps[si].items[ei].embed);
+    }
   }
 
-  function loadEp(si, ei, embed) {
-    state.serverIdx = si; state.epIdx = ei;
-
-    // Highlight ep btn
-    qsa('.ep-btn').forEach((b, i) => b.classList.toggle('active', i === ei));
-
-    const ep = (state.movie.episodes[si]?.items || [])[ei];
-    qs('#playerTitle').textContent = `${state.movie.name} — Tập ${ep?.name || ''}`;
-    qs('#playerFrame').src = embed || '';
+  // Chuyển sang tập tiếp theo (Next)
+  function nextEpisode() {
+    const items = state.movie.episodes[state.serverIdx].items;
+    if (state.epIdx < items.length - 1) {
+      loadEp(state.serverIdx, state.epIdx + 1, items[state.epIdx + 1].embed);
+    } else {
+      toast('Bạn đang ở tập cuối cùng của bộ phim!');
+    }
   }
+
+  // Quay lại tập trước (Prev)
+  function prevEpisode() {
+    if (state.epIdx > 0) {
+      const items = state.movie.episodes[state.serverIdx].items;
+      loadEp(state.serverIdx, state.epIdx - 1, items[state.epIdx - 1].embed);
+    } else {
+      toast('Bạn đang ở tập đầu tiên!');
+    }
+  }
+
+  // Tìm kiếm tập phim ở Sidebar
+  qs('#epSearch').addEventListener('input', e => {
+    const t = e.target.value.toLowerCase().trim();
+    qsa('.ep-btn', qs('#epGrid')).forEach(b => {
+      b.style.display = b.textContent.toLowerCase().includes(t) ? 'block' : 'none';
+    });
+  });
+
+  // Gắn sự kiện nút Next / Prev
+  const prevBtn = qs('#prevEpBtn');
+  const nextBtn = qs('#nextEpBtn');
+  prevBtn?.addEventListener('click', prevEpisode);
+  nextBtn?.addEventListener('click', nextEpisode);
+
+  // Shortcuts Modal
+  const shortcutsHelp = qs('#btnShortcutsHelp');
+  const shortcutsClose = qs('#shortcutsClose');
+  shortcutsHelp?.addEventListener('click', () => qs('#shortcutsModal').classList.remove('hidden'));
+  shortcutsClose?.addEventListener('click', () => qs('#shortcutsModal').classList.add('hidden'));
+
+  // Lắng nghe phím tắt bàn phím toàn cục khi ở trang Watch
+  window.addEventListener('keydown', e => {
+    if (Router.current() !== 'watch') return;
+    if (['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
+
+    if (e.key === 'n' || e.key === 'N') {
+      nextEpisode();
+    } else if (e.key === 'p' || e.key === 'P') {
+      prevEpisode();
+    }
+  });
 
   return {
-    load,
+    load({ movie, serverIdx = 0, epIdx = 0, embed }) {
+      state.movie = movie;
+      state.serverIdx = serverIdx;
+      state.epIdx = epIdx;
+
+      const eps = movie.episodes || [];
+      qs('#epSearch').value = '';
+      if (!eps.length) return Router.go('detail', { slug: movie.slug });
+
+      qs('#serverTabs').innerHTML = eps.map((s, i) =>
+        `<button class="server-tab ${i === serverIdx ? 'active' : ''}">${s.server_name}</button>`
+      ).join('');
+
+      qsa('.server-tab', qs('#serverTabs')).forEach((t, i) => {
+        t.onclick = () => loadServer(i, 0);
+      });
+
+      loadServer(serverIdx, epIdx);
+    },
     state: () => state,
   };
 })();
 
 /* ═══════════════════════════════════════════════════════
-   13. SEARCH
+   11. SEARCH MODULE
 ═══════════════════════════════════════════════════════ */
 const Search = (() => {
-  const input = qs('#globalSearch');
-  const dropdown = qs('#searchDropdown');
+  const inp = qs('#globalSearch');
+  const drop = qs('#searchDropdown');
 
   const doSearch = debounce(async (kw) => {
-    const trimmed = kw.trim();
-    if (trimmed.length < 2) { dropdown.classList.remove('active'); return; }
-    dropdown.innerHTML = `<div class="sd-loading">Đang tìm...</div>`;
-    dropdown.classList.add('active');
+    const t = kw.trim();
+    if (t.length < 2) return drop.classList.remove('active');
+    drop.innerHTML = `<div class="sd-loading">Đang tìm kiếm phim...</div>`;
+    drop.classList.add('active');
+
     try {
-      const data = await API.search(trimmed);
-      const items = (data.items || []).slice(0, 10);
+      const data = await API.search(t);
+      const items = (data.items || []).slice(0, 8);
       if (!items.length) {
-        dropdown.innerHTML = `<div class="sd-empty">Không tìm thấy phim nào</div>`;
+        drop.innerHTML = `<div class="sd-empty">Không tìm thấy phim nào khớp</div>`;
         return;
       }
-      dropdown.innerHTML = '';
-      items.forEach(f => {
-        const item = el('div', 'sd-item');
-        item.innerHTML = `
-          <img src="${f.thumb_url}" alt="${f.name}" onerror="this.style.display='none'" />
+      drop.innerHTML = items.map(f => `
+        <div class="sd-item" data-slug="${f.slug}">
+          <img src="${f.thumb_url || f.poster_url}" onerror="this.style.display='none'" />
           <div class="sd-info">
             <div class="sd-name">${f.name}</div>
-            <div class="sd-sub">${f.year || ''} ${f.current_episode ? '· ' + f.current_episode : ''} ${f.language ? '· ' + f.language : ''}</div>
+            <div class="sd-sub">${f.year || ''} ${f.current_episode ? '· ' + f.current_episode : ''} ${f.quality ? '· ' + f.quality : ''}</div>
           </div>
-        `;
-        item.addEventListener('click', () => {
-          dropdown.classList.remove('active');
-          input.value = '';
-          Router.go('detail', { slug: f.slug });
-        });
-        dropdown.appendChild(item);
+        </div>
+      `).join('');
+
+      qsa('.sd-item', drop).forEach(el => {
+        el.onclick = () => {
+          drop.classList.remove('active');
+          inp.value = '';
+          Router.go('detail', { slug: el.dataset.slug });
+        };
       });
-    } catch (_) {
-      dropdown.innerHTML = `<div class="sd-empty">Lỗi tìm kiếm, thử lại sau.</div>`;
+    } catch {
+      drop.innerHTML = `<div class="sd-empty">Lỗi kết nối tìm kiếm.</div>`;
     }
   }, CFG.SEARCH_DEBOUNCE);
 
-  input.addEventListener('input', e => doSearch(e.target.value));
-  input.addEventListener('keydown', e => {
-    if (e.key === 'Enter') {
-      const kw = input.value.trim();
-      if (kw.length >= 2) {
-        dropdown.classList.remove('active');
-        input.value = '';
-        Router.go('list', { keyword: kw });
-      }
+  inp.addEventListener('input', e => doSearch(e.target.value));
+  inp.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && inp.value.trim().length >= 2) {
+      drop.classList.remove('active');
+      Router.go('list', { keyword: inp.value.trim() });
+      inp.value = '';
     }
-    if (e.key === 'Escape') dropdown.classList.remove('active');
   });
 
   document.addEventListener('click', e => {
-    if (!qs('#globalSearchWrap').contains(e.target)) dropdown.classList.remove('active');
+    if (!qs('#globalSearchWrap').contains(e.target)) drop.classList.remove('active');
   });
 })();
 
 /* ═══════════════════════════════════════════════════════
-   14. AUTH UI
+   12. AUTH & PROFILE UI (Google Login, Đổi mật khẩu, Lịch sử)
 ═══════════════════════════════════════════════════════ */
-function openAuth(tab = 'login') {
+function openAuthModal(tab = 'login') {
   qs('#authModal').classList.remove('hidden');
-  switchAuthTab(tab);
-}
-
-function closeAuth() {
-  qs('#authModal').classList.add('hidden');
-}
-
-function switchAuthTab(tab) {
   qsa('.auth-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
   qs('#loginForm').classList.toggle('hidden', tab !== 'login');
   qs('#signupForm').classList.toggle('hidden', tab !== 'signup');
 }
+qs('#authModalClose').addEventListener('click', () => qs('#authModal').classList.add('hidden'));
+qsa('.auth-tab').forEach(t => t.addEventListener('click', () => openAuthModal(t.dataset.tab)));
+
+// Google Account Chooser
+const GoogleAuthUI = (() => {
+  const modal = qs('#googleChooserModal');
+  const customBox = qs('#googleCustomBox');
+
+  qs('#googleLoginBtn').addEventListener('click', () => {
+    qs('#authModal').classList.add('hidden');
+    customBox.classList.add('hidden');
+    modal.classList.remove('hidden');
+  });
+
+  qs('#googleChooserClose').addEventListener('click', () => modal.classList.add('hidden'));
+
+  // Chọn từ tài khoản có sẵn
+  qsa('.google-acc-item[data-email]').forEach(item => {
+    item.addEventListener('click', () => {
+      const email = item.dataset.email;
+      const name = item.dataset.name;
+      const avatar = item.dataset.avatar;
+      Auth.googleLogin(name, email, avatar);
+      modal.classList.add('hidden');
+      updateAuthUI();
+      toast(`Đã đăng nhập Google: ${name} 🎉`);
+    });
+  });
+
+  // Tùy chọn nhập tài khoản Google khác
+  qs('#googleCustomAccBtn').addEventListener('click', () => {
+    customBox.classList.toggle('hidden');
+  });
+
+  qs('#customGoogleSubmit').addEventListener('click', () => {
+    const name = qs('#customGoogleName').value.trim() || 'Google User';
+    const email = qs('#customGoogleEmail').value.trim();
+    if (!email.includes('@')) return toast('Vui lòng nhập đúng địa chỉ Gmail.');
+    Auth.googleLogin(name, email, name[0].toUpperCase());
+    modal.classList.add('hidden');
+    updateAuthUI();
+    toast(`Đã đăng nhập Google: ${name} 🎉`);
+  });
+})();
+
+// Profile Modal Controller (Thông tin, Lịch sử xem, Phim yêu thích, Đổi mật khẩu)
+const ProfileUI = (() => {
+  const mod = qs('#profileModal');
+
+  function renderHistory() {
+    const list = qs('#historyList');
+    const h = Auth.getHistory();
+    qs('#statHistoryCount').textContent = h.length;
+
+    if (!h.length) {
+      list.innerHTML = `<div class="empty-state" style="padding:30px 10px"><div class="empty-icon" style="font-size:32px">⏳</div><p>Bạn chưa xem phim nào gần đây.</p></div>`;
+      return;
+    }
+
+    list.innerHTML = h.map(item => `
+      <div class="profile-list-item" data-slug="${item.slug}" data-sidx="${item.sIdx || 0}" data-eidx="${item.eIdx || 0}">
+        <img src="${item.thumb_url}" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 160 240%22><rect fill=%22%232a2e42%22 width=%22160%22 height=%22240%22/></svg>'" />
+        <div class="pli-info">
+          <div class="pli-name">${item.name}</div>
+          <div class="pli-sub">Đang xem: <strong>Tập ${item.epName}</strong> · ${timeAgo(item.time)}</div>
+        </div>
+        <button class="pli-remove" title="Xóa khỏi lịch sử">✕</button>
+      </div>
+    `).join('');
+
+    // Resume watch
+    qsa('.profile-list-item', list).forEach(itemEl => {
+      itemEl.addEventListener('click', async (e) => {
+        if (e.target.closest('.pli-remove')) {
+          e.stopPropagation();
+          Auth.removeHistoryItem(itemEl.dataset.slug);
+          renderHistory();
+          toast('Đã xoá phim khỏi lịch sử xem.');
+          return;
+        }
+        mod.classList.add('hidden');
+        try {
+          const m = (await API.detail(itemEl.dataset.slug)).movie;
+          const sIdx = parseInt(itemEl.dataset.sidx) || 0;
+          const eIdx = parseInt(itemEl.dataset.eidx) || 0;
+          const srv = m.episodes[sIdx] || m.episodes[0];
+          const ep = srv.items[eIdx] || srv.items[0];
+          Router.go('watch', { movie: m, serverIdx: sIdx, epIdx: eIdx, embed: ep.embed });
+        } catch {
+          toast('Không thể mở lại phim.');
+        }
+      });
+    });
+  }
+
+  function renderFavs() {
+    const list = qs('#favsList');
+    const f = Auth.getFavs();
+    qs('#statFavCount').textContent = f.length;
+
+    if (!f.length) {
+      list.innerHTML = `<div class="empty-state" style="padding:30px 10px"><div class="empty-icon" style="font-size:32px">♥</div><p>Chưa có phim trong danh sách yêu thích.</p></div>`;
+      return;
+    }
+
+    list.innerHTML = f.map(item => `
+      <div class="profile-list-item" data-slug="${item.slug}">
+        <img src="${item.thumb_url}" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 160 240%22><rect fill=%22%232a2e42%22 width=%22160%22 height=%22240%22/></svg>'" />
+        <div class="pli-info">
+          <div class="pli-name">${item.name}</div>
+        </div>
+      </div>
+    `).join('');
+
+    qsa('.profile-list-item', list).forEach(itemEl => {
+      itemEl.onclick = () => {
+        mod.classList.add('hidden');
+        Router.go('detail', { slug: itemEl.dataset.slug });
+      };
+    });
+  }
+
+  function showTab(tabId) {
+    qsa('.profile-tab').forEach(t => t.classList.toggle('active', t.dataset.ptab === tabId));
+    qsa('.profile-panel').forEach(p => p.classList.add('hidden'));
+    qs(`#ptab${tabId.charAt(0).toUpperCase() + tabId.slice(1)}`).classList.remove('hidden');
+
+    if (tabId === 'history') renderHistory();
+    if (tabId === 'favs') renderFavs();
+
+    qs('#changePassError').classList.add('hidden');
+    qs('#profileInfoError').classList.add('hidden');
+  }
+
+  qsa('.profile-tab').forEach(t => t.addEventListener('click', () => showTab(t.dataset.ptab)));
+  qs('#profileModalClose').addEventListener('click', () => mod.classList.add('hidden'));
+
+  // Lưu thông tin cơ bản
+  qs('#profileInfoForm').addEventListener('submit', e => {
+    e.preventDefault();
+    const res = Auth.updateInfo(qs('#profileNameInput').value);
+    const err = qs('#profileInfoError');
+    if (res.ok) {
+      err.textContent = 'Đã lưu thay đổi họ tên!';
+      err.className = 'form-success';
+      err.classList.remove('hidden');
+      updateAuthUI();
+      open();
+    }
+  });
+
+  // Đổi mật khẩu
+  qs('#changePassForm').addEventListener('submit', e => {
+    e.preventDefault();
+    const oldP = qs('#oldPassword').value;
+    const newP = qs('#newPassword').value;
+    const confP = qs('#confirmPassword').value;
+    const err = qs('#changePassError');
+    err.className = 'form-error';
+
+    if (newP.length < 6) {
+      err.textContent = 'Mật khẩu mới phải có tối thiểu 6 ký tự.';
+      err.classList.remove('hidden');
+      return;
+    }
+    if (newP !== confP) {
+      err.textContent = 'Xác nhận mật khẩu mới không trùng khớp.';
+      err.classList.remove('hidden');
+      return;
+    }
+
+    const res = Auth.changePassword(oldP, newP);
+    if (!res.ok) {
+      err.textContent = res.err;
+      err.classList.remove('hidden');
+    } else {
+      err.textContent = 'Đổi mật khẩu thành công!';
+      err.className = 'form-success';
+      err.classList.remove('hidden');
+      qs('#changePassForm').reset();
+      toast('Đã cập nhật mật khẩu mới! 🔒');
+    }
+  });
+
+  // Xóa lịch sử
+  qs('#clearHistoryBtn').addEventListener('click', () => {
+    Auth.clearHistory();
+    renderHistory();
+    toast('Đã dọn dẹp sạch toàn bộ lịch sử xem.');
+  });
+
+  // Đăng xuất
+  qs('#profileLogoutBtn').addEventListener('click', () => {
+    Auth.logout();
+    mod.classList.add('hidden');
+    updateAuthUI();
+    toast('Đã đăng xuất tài khoản.');
+  });
+
+  function open() {
+    const u = Auth.current();
+    if (!u) return;
+    qs('#profileAvatar').textContent = u.avatar;
+    qs('#profileName').textContent = u.name;
+    qs('#profileEmail').textContent = u.email;
+
+    const isGoogle = u.type === 'google';
+    qs('#profileBadge').textContent = isGoogle ? '✓ Google Account Verified' : 'Lumi Member';
+    qs('#profileBadge').style.color = isGoogle ? '#4285f4' : 'var(--green)';
+
+    qs('#profileNameInput').value = u.name;
+    qs('#profileEmailInput').value = u.email;
+
+    // Hiển thị giao diện tab Đổi mật khẩu tương ứng với loại tài khoản
+    const googleNotice = qs('#googlePasswordNotice');
+    const changeForm = qs('#changePassForm');
+    if (isGoogle) {
+      googleNotice.classList.remove('hidden');
+      changeForm.classList.add('hidden');
+    } else {
+      googleNotice.classList.add('hidden');
+      changeForm.classList.remove('hidden');
+    }
+
+    renderHistory();
+    renderFavs();
+    showTab('info');
+    mod.classList.remove('hidden');
+  }
+
+  return { open };
+})();
+
+// Password Visibility Toggles
+qsa('.pass-toggle').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const input = qs(`#${btn.dataset.target}`);
+    if (input.type === 'password') {
+      input.type = 'text';
+      btn.textContent = '🙈';
+    } else {
+      input.type = 'password';
+      btn.textContent = '👁';
+    }
+  });
+});
 
 function updateAuthUI() {
-  const user = Auth.current();
-  const btn = qs('#authBtn');
-  if (user) {
-    qs('#avatarIcon').textContent = user.avatar || '👤';
-    qs('#authLabel').textContent = user.name?.split(' ')[0] || 'Tôi';
-    btn.title = user.email;
+  const u = Auth.current();
+  if (u) {
+    qs('#avatarBadge').textContent = u.avatar;
+    qs('#authLabel').textContent = u.name.split(' ')[0] || 'Tài khoản';
   } else {
-    qs('#avatarIcon').textContent = '👤';
+    qs('#avatarBadge').textContent = '👤';
     qs('#authLabel').textContent = 'Đăng nhập';
   }
 }
 
-// Create user menu dropdown
-function buildUserMenu() {
-  let menu = qs('#userMenu');
-  if (!menu) {
-    menu = el('div', 'user-menu', '');
-    menu.id = 'userMenu';
-    qs('.top-actions').appendChild(menu);
-  }
-  const user = Auth.current();
-  if (!user) { menu.classList.remove('open'); return; }
-  menu.innerHTML = `
-    <div class="user-menu-header">
-      <div class="user-menu-name">${user.name}</div>
-      <div class="user-menu-email">${user.email}</div>
-    </div>
-    <button class="user-menu-item" id="menuFavs">♥ &nbsp; Phim yêu thích</button>
-    <button class="user-menu-item danger" id="menuLogout">Đăng xuất</button>
-  `;
-  qs('#menuFavs').addEventListener('click', () => {
-    menu.classList.remove('open');
-    const favs = Auth.getFavs();
-    if (!favs.length) { toast('Chưa có phim yêu thích.'); return; }
-    Router.go('list', { keyword: '', title: 'Phim yêu thích', _favs: favs });
-    // Override grid with favs
-    setTimeout(() => {
-      const grid = qs('#filmGrid');
-      renderFilms(favs, grid);
-      qs('#listMeta').textContent = `${favs.length} phim`;
-    }, 50);
-  });
-  qs('#menuLogout').addEventListener('click', () => {
-    Auth.logout();
+// Bắt sự kiện form Đăng nhập / Đăng ký
+qs('#authBtn').addEventListener('click', () => {
+  if (Auth.isLoggedIn()) ProfileUI.open();
+  else openAuthModal('login');
+});
+
+qs('#loginFormEl').addEventListener('submit', e => {
+  e.preventDefault();
+  const res = Auth.login(qs('#loginEmail').value, qs('#loginPassword').value);
+  const err = qs('#loginError');
+  if (!res.ok) {
+    err.textContent = res.err;
+    err.classList.remove('hidden');
+  } else {
+    err.classList.add('hidden');
+    qs('#authModal').classList.add('hidden');
     updateAuthUI();
-    menu.classList.remove('open');
-    toast('Đã đăng xuất.');
-  });
-  menu.classList.add('open');
-  setTimeout(() => {
-    document.addEventListener('click', () => menu.classList.remove('open'), { once: true });
-  }, 10);
-}
+    toast('Chào mừng bạn đã trở lại! 🎬');
+  }
+});
+
+qs('#signupFormEl').addEventListener('submit', e => {
+  e.preventDefault();
+  const res = Auth.signup(qs('#signupName').value, qs('#signupEmail').value, qs('#signupPassword').value);
+  const err = qs('#signupError');
+  if (!res.ok) {
+    err.textContent = res.err;
+    err.classList.remove('hidden');
+  } else {
+    err.classList.add('hidden');
+    qs('#authModal').classList.add('hidden');
+    updateAuthUI();
+    toast('Tạo tài khoản thành công! 🎉');
+  }
+});
 
 /* ═══════════════════════════════════════════════════════
-   15. UTILITIES
+   13. QUICK FILTER BAR & INITIALIZATION
 ═══════════════════════════════════════════════════════ */
-function toSlug(str) {
-  return str.toLowerCase()
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-    .replace(/đ/g,'d').replace(/[^a-z0-9\s-]/g,'')
-    .trim().replace(/\s+/g,'-');
-}
+const FilterBar = (() => {
+  const GENRES = [
+    { v: 'hanh-dong', l: 'Hành Động' }, { v: 'tinh-cam', l: 'Tình Cảm' },
+    { v: 'hai-huoc', l: 'Hài Hước' }, { v: 'tam-ly', l: 'Tâm Lý' },
+    { v: 'hoat-hinh', l: 'Hoạt Hình' }, { v: 'kinh-di', l: 'Kinh Dị' },
+    { v: 'vien-tuong', l: 'Viễn Tưởng' }, { v: 'phieu-luu', l: 'Phiêu Lưu' },
+    { v: 'co-trang', l: 'Cổ Trang' }, { v: 'chien-tranh', l: 'Chiến Tranh' }
+  ];
+  const COUNTRIES = [
+    { v: 'my', l: 'Mỹ' }, { v: 'han-quoc', l: 'Hàn Quốc' },
+    { v: 'trung-quoc', l: 'Trung Quốc' }, { v: 'viet-nam', l: 'Việt Nam' },
+    { v: 'nhat-ban', l: 'Nhật Bản' }, { v: 'thai-lan', l: 'Thái Lan' },
+    { v: 'anh', l: 'Anh' }, { v: 'phap', l: 'Pháp' }
+  ];
 
-function getCategoryList(film) {
-  // Extract category names from flat film object (used in home sections)
-  return { genre: '', country: '', year: film.year || '' };
-}
+  function fillSelect(selId, opts) {
+    const sel = qs(`#${selId}`);
+    opts.forEach(o => {
+      const opt = el('option');
+      opt.value = o.v;
+      opt.textContent = o.l;
+      sel.appendChild(opt);
+    });
+  }
+
+  let inited = false;
+  return {
+    init() {
+      if (inited) return;
+      inited = true;
+      fillSelect('filterGenre', GENRES);
+      fillSelect('filterCountry', COUNTRIES);
+      fillSelect('filterLang', [
+        { v: 'vietsub', l: 'Vietsub' },
+        { v: 'thuyet-minh', l: 'Thuyết minh' },
+        { v: 'long-tieng', l: 'Lồng tiếng' }
+      ]);
+      const selYear = qs('#filterYear');
+      const curYear = new Date().getFullYear();
+      for (let y = curYear; y >= 2012; y--) {
+        const o = el('option');
+        o.value = y;
+        o.textContent = `Năm ${y}`;
+        selYear.appendChild(o);
+      }
+    }
+  };
+})();
 
 /* ═══════════════════════════════════════════════════════
-   16. EVENT WIRING
+   14. BOOTSTRAP EVENT LISTENERS
 ═══════════════════════════════════════════════════════ */
 document.addEventListener('DOMContentLoaded', () => {
-  // Theme toggle
-  qs('#themeToggle').addEventListener('click', () => Theme.toggle());
-
-  // Auth button
-  qs('#authBtn').addEventListener('click', (e) => {
-    e.stopPropagation();
-    if (Auth.isLoggedIn()) buildUserMenu();
-    else openAuth('login');
+  // Theme Toggle (Light / Dark)
+  qs('#themeToggle').addEventListener('click', () => {
+    const ds = document.documentElement.dataset;
+    const isDark = ds.theme === 'dark';
+    ds.theme = isDark ? 'light' : 'dark';
+    localStorage.setItem('lumi_theme', ds.theme);
+    qs('#themeIcon').textContent = isDark ? '☾' : '☀';
   });
+  if (localStorage.getItem('lumi_theme') === 'light') {
+    document.documentElement.dataset.theme = 'light';
+    qs('#themeIcon').textContent = '☾';
+  }
 
-  // Auth modal close
-  qs('[data-close="authModal"]').addEventListener('click', closeAuth);
-  qs('#authModal').addEventListener('click', e => {
-    if (e.target === qs('#authModal')) closeAuth();
-  });
-
-  // Auth tabs
-  qsa('.auth-tab').forEach(t => {
-    t.addEventListener('click', () => switchAuthTab(t.dataset.tab));
-  });
-
-  // Login form
-  qs('#loginFormEl').addEventListener('submit', e => {
-    e.preventDefault();
-    const email = qs('#loginEmail').value;
-    const pw = qs('#loginPassword').value;
-    const res = Auth.login(email, pw);
-    const errEl = qs('#loginError');
-    if (!res.ok) {
-      errEl.textContent = res.err;
-      errEl.classList.remove('hidden');
-    } else {
-      errEl.classList.add('hidden');
-      closeAuth();
-      updateAuthUI();
-      toast(`Chào mừng trở lại! 🎬`);
-    }
-  });
-
-  // Signup form
-  qs('#signupFormEl').addEventListener('submit', e => {
-    e.preventDefault();
-    const name = qs('#signupName').value;
-    const email = qs('#signupEmail').value;
-    const pw = qs('#signupPassword').value;
-    const res = Auth.signup(name, email, pw);
-    const errEl = qs('#signupError');
-    if (!res.ok) {
-      errEl.textContent = res.err;
-      errEl.classList.remove('hidden');
-    } else {
-      errEl.classList.add('hidden');
-      closeAuth();
-      updateAuthUI();
-      toast(`Chào mừng ${name}! 🎉`);
-    }
-  });
-
-  // Google login
-  qs('#googleLoginBtn').addEventListener('click', () => {
-    Auth.googleLogin();
-    closeAuth();
-    updateAuthUI();
-    toast('Đã đăng nhập với Google! 🎬');
-  });
-
-  // Filter apply
+  // Filter Apply & Reset
   qs('#filterApply').addEventListener('click', () => {
-    const genre = qs('#filterGenre').value;
-    const country = qs('#filterCountry').value;
-    const year = qs('#filterYear').value;
-    const lang = qs('#filterLang').value;
-    if (!genre && !country && !year && !lang) { toast('Vui lòng chọn ít nhất một bộ lọc.'); return; }
-    const params = {};
-    if (genre) { params.genre = genre; params.title = qs('#filterGenre option:checked').text; }
-    else if (country) { params.country = country; params.title = qs('#filterCountry option:checked').text; }
-    else if (year) { params.year = year; params.title = `Năm ${year}`; }
-    else if (lang) { params.lang = lang; params.title = qs('#filterLang option:checked').text; }
-    Router.go('list', params);
-  });
+    const g = qs('#filterGenre').value;
+    const c = qs('#filterCountry').value;
+    const y = qs('#filterYear').value;
+    const l = qs('#filterLang').value;
+    if (!g && !c && !y && !l) return toast('Vui lòng chọn ít nhất một tiêu chí lọc.');
 
-  // Filter reset
+    const p = {};
+    const labels = [];
+    if (g) {
+      p.genre = g;
+      labels.push(qs('#filterGenre option:checked').text);
+    }
+    if (c) {
+      p.country = c;
+      labels.push(qs('#filterCountry option:checked').text);
+    }
+    if (y) {
+      p.year = y;
+      labels.push(`Năm ${y}`);
+    }
+    if (l) {
+      p.lang = l;
+      labels.push(qs('#filterLang option:checked').text);
+    }
+    p.title = labels.join(' · ');
+
+    Router.go('list', p);
+  });
   qs('#filterReset').addEventListener('click', () => {
-    qs('#filterGenre').value = '';
-    qs('#filterCountry').value = '';
-    qs('#filterYear').value = '';
-    qs('#filterLang').value = '';
+    qsa('.select-group select').forEach(s => s.value = '');
   });
 
-  // Nav links (desktop + mobile + footer)
+  // Navigation Links
   document.addEventListener('click', e => {
     const link = e.target.closest('[data-page]');
     if (!link) return;
     e.preventDefault();
-    const page = link.dataset.page;
-    if (page === 'home') {
+    const p = link.dataset.page;
+    if (p === 'home') {
       Home.reset();
       Router.go('home');
-    } else if (['phim-le','phim-bo','phim-chieu-rap','hoat-hinh','new'].includes(page)) {
-      const params = page === 'new'
-        ? { type: 'new' }
-        : { slug: page, type: page };
-      Router.go('list', params);
+    } else if (['new', 'phim-le', 'phim-bo', 'phim-chieu-rap'].includes(p)) {
+      Router.go('list', { type: p, slug: p === 'new' ? undefined : p });
     } else {
-      Router.go('list', { slug: page });
+      Router.go('list', { slug: p });
     }
-    // Close mobile nav
     qs('#mobileNav').classList.remove('open');
   });
+
+  // Mobile hamburger
+  qs('#hamburger').addEventListener('click', () => qs('#mobileNav').classList.toggle('open'));
 
   // Back buttons
   qs('#backBtn').addEventListener('click', () => history.back() || Router.go('home'));
@@ -1101,17 +1648,20 @@ document.addEventListener('DOMContentLoaded', () => {
     else Router.go('home');
   });
 
-  // Hamburger
-  qs('#hamburger').addEventListener('click', () => {
-    qs('#mobileNav').classList.toggle('open');
-  });
+  // Brand home logo
+  qs('#brandHome').onclick = qs('#footerBrand').onclick = (e) => {
+    e.preventDefault();
+    Home.reset();
+    Router.go('home');
+  };
 
-  // Brand / footer brand
-  qs('#brandHome').addEventListener('click', (e) => { e.preventDefault(); Home.reset(); Router.go('home'); });
-  qs('#footerBrand').addEventListener('click', (e) => { e.preventDefault(); Home.reset(); Router.go('home'); });
-
-  // Init
+  // Khởi động
   updateAuthUI();
   FilterBar.init();
-  Router.go('home');
+  if (!Router.restore()) Router.go('home');
+
+  window.addEventListener('popstate', () => {
+    const route = Router.restore();
+    if (!route) Router.go('home');
+  });
 });
