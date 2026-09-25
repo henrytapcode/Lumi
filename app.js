@@ -89,18 +89,32 @@ const API = (() => {
       const cached = Cache.get(url);
       if (cached) return cached;
     }
-    let lastErr;
-    for (let i = 0; i <= CFG.RETRY; i++) {
-      try {
-        const data = await fetchWithTimeout(url);
-        if (!force) Cache.set(url, data, ttl);
-        return data;
-      } catch (e) {
-        lastErr = e;
-        if (i < CFG.RETRY) await sleep(CFG.RETRY_DELAY * (i + 1));
+
+    // Hai lần điều hướng/lọc liên tiếp vào cùng URL dùng chung một promise,
+    // tránh phát sinh các request song song trùng nhau trước khi cache kịp ghi.
+    const inflightKey = `request:${force ? 'force:' : ''}${url}`;
+    if (pending.has(inflightKey)) return pending.get(inflightKey);
+
+    const request = (async () => {
+      let lastErr;
+      for (let i = 0; i <= CFG.RETRY; i++) {
+        try {
+          const data = await fetchWithTimeout(url);
+          if (!force) Cache.set(url, data, ttl);
+          return data;
+        } catch (e) {
+          lastErr = e;
+          if (i < CFG.RETRY) await sleep(CFG.RETRY_DELAY * (i + 1));
+        }
       }
+      throw lastErr;
+    })();
+    pending.set(inflightKey, request);
+    try {
+      return await request;
+    } finally {
+      pending.delete(inflightKey);
     }
-    throw lastErr;
   }
 
   function once(key, request) {
@@ -617,9 +631,10 @@ const Home = (() => {
 ═══════════════════════════════════════════════════════ */
 const List = (() => {
   const FILTER_PAGE_SIZE = 18;
-  // Tải song song và khử trùng request chi tiết giúp lọc nhiều tiêu chí phản hồi nhanh hơn.
-  const FILTER_REQUEST_CONCURRENCY = 10;
+  // Giới hạn fan-out để lọc giao nhau không làm nghẽn API hoặc trình duyệt.
+  const FILTER_REQUEST_CONCURRENCY = 6;
   const filteredResults = new Map();
+  let loadVersion = 0;
 
   function slugify(v) {
     return String(v || '')
@@ -641,38 +656,22 @@ const List = (() => {
     return cats;
   }
 
-  function matchesFilters(item, p) {
-    const genre = p.genre ? slugify(p.genre) : '';
-    const country = p.country ? slugify(p.country) : '';
-    const year = p.year ? String(p.year) : '';
-    const lang = p.lang ? slugify(p.lang) : '';
-
-    if (genre) {
-      const ok = getCategoryNames(item).some(name => slugify(name) === genre);
-      if (!ok) return false;
-    }
-    if (country) {
-      const ok = getCategoryNames(item).some(name => slugify(name) === country);
-      if (!ok) return false;
-    }
-    if (year) {
-      const itemYear = String(item?.year || '').trim();
-      if (!itemYear || itemYear !== year) return false;
-    }
-    if (lang) {
-      const itemLang = slugify(item?.language || '');
-      if (itemLang !== lang) return false;
-    }
-    return true;
-  }
-
   function getFilterSources(p) {
     return [
-      p.genre && { load: page => API.byGenre(p.genre, page) },
-      p.country && { load: page => API.byCountry(p.country, page) },
-      p.year && { load: page => API.byYear(p.year, page) },
-      p.lang && { load: page => API.byLang(p.lang, page) },
+      p.genre && { key: 'genre', load: page => API.byGenre(p.genre, page) },
+      p.country && { key: 'country', load: page => API.byCountry(p.country, page) },
+      p.year && { key: 'year', load: page => API.byYear(p.year, page) },
+      p.lang && { key: 'lang', load: page => API.byLang(p.lang, page) },
     ].filter(Boolean);
+  }
+
+  // Không cần gọi thử cả 4 endpoint để so sánh total_items. Năm thường có
+  // ít kết quả nhất; tiếp theo là thể loại/quốc gia rồi ngôn ngữ. API đã lọc
+  // sẵn theo nguồn được chọn nên đây là một request thay vì N request ban đầu.
+  function chooseFilterSource(p) {
+    const sources = getFilterSources(p);
+    const priority = ['year', 'genre', 'country', 'lang'];
+    return priority.map(key => sources.find(source => source.key === key)).find(Boolean) || sources[0];
   }
 
   async function getFilteredState(p) {
@@ -681,32 +680,36 @@ const List = (() => {
     });
     if (filteredResults.has(cacheKey)) return filteredResults.get(cacheKey);
 
-    // Danh sách tóm tắt từ API không chứa category. Tải trang đầu của từng
-    // tiêu chí để chọn nguồn có ít ứng viên nhất, sau đó chỉ truy vấn chi tiết
-    // của các phim cần đối chiếu. Điều này tránh tải toàn bộ mọi danh sách.
-    const firstPages = await Promise.all(getFilterSources(p).map(source => source.load(1)));
-    const sourceIndex = firstPages.reduce((best, data, index) => {
-      const total = Number(data.paginate?.total_items) || Infinity;
-      const bestTotal = Number(firstPages[best].paginate?.total_items) || Infinity;
-      return total < bestTotal ? index : best;
-    }, 0);
+    const source = chooseFilterSource(p);
+    const firstPage = await source.load(1);
 
     const state = {
-      source: getFilterSources(p)[sourceIndex],
-      firstPage: firstPages[sourceIndex],
+      source,
+      sourceKey: source.key,
+      firstPage,
       nextSourcePage: 1,
-      totalSourcePages: Math.max(1, Number(firstPages[sourceIndex].paginate?.total_page) || 1),
+      totalSourcePages: Math.max(1, Number(firstPage.paginate?.total_page) || 1),
       items: [],
       exhausted: false,
+      scanPromise: null,
     };
+    // Giữ cache bộ lọc có giới hạn để không tích lũy danh sách phim suốt phiên.
+    if (filteredResults.size >= 12) filteredResults.delete(filteredResults.keys().next().value);
     filteredResults.set(cacheKey, state);
     return state;
   }
 
-  async function enrichAndMatch(items, p) {
+  async function enrichAndMatch(items, p, sourceKey) {
+    // Năm/ngôn ngữ có sẵn trong item tóm tắt; loại các ứng viên sai trước khi
+    // gọi detail. Nếu nguồn đã lọc theo thể loại/quốc gia thì cũng không cần
+    // xác minh lại đúng tiêu chí đó trong từng detail.
+    const candidates = items.filter(item => matchesFilters(item, p, sourceKey, true));
+    const needsDetail = (p.genre && sourceKey !== 'genre') || (p.country && sourceKey !== 'country');
+    if (!needsDetail) return candidates.filter(item => matchesFilters(item, p, sourceKey));
+
     const matched = [];
-    for (let start = 0; start < items.length; start += FILTER_REQUEST_CONCURRENCY) {
-      const batch = items.slice(start, start + FILTER_REQUEST_CONCURRENCY);
+    for (let start = 0; start < candidates.length; start += FILTER_REQUEST_CONCURRENCY) {
+      const batch = candidates.slice(start, start + FILTER_REQUEST_CONCURRENCY);
       const details = await Promise.all(batch.map(async item => {
         try {
           const data = await API.detail(item.slug);
@@ -715,22 +718,47 @@ const List = (() => {
           return item;
         }
       }));
-      matched.push(...details.filter(item => matchesFilters(item, p)));
+      matched.push(...details.filter(item => matchesFilters(item, p, sourceKey)));
     }
     return matched;
+  }
+
+  function matchesFilters(item, p, sourceKey, summaryOnly = false) {
+    const genre = p.genre ? slugify(p.genre) : '';
+    const country = p.country ? slugify(p.country) : '';
+    const year = p.year ? String(p.year) : '';
+    const lang = p.lang ? slugify(p.lang) : '';
+
+    if (genre && sourceKey !== 'genre' && !summaryOnly) {
+      if (!getCategoryNames(item).some(name => slugify(name) === genre)) return false;
+    }
+    if (country && sourceKey !== 'country' && !summaryOnly) {
+      if (!getCategoryNames(item).some(name => slugify(name) === country)) return false;
+    }
+    if (year && String(item?.year || '').trim() !== year) return false;
+    if (lang && slugify(item?.language || '') !== lang) return false;
+    return true;
   }
 
   async function fetchFilteredPage(p, page) {
     const state = await getFilteredState(p);
     const targetCount = page * FILTER_PAGE_SIZE;
-
-    while (!state.exhausted && state.items.length < targetCount) {
-      const sourcePage = state.nextSourcePage === 1
-        ? state.firstPage
-        : await state.source.load(state.nextSourcePage);
-      state.nextSourcePage++;
-      state.items.push(...await enrichAndMatch(sourcePage.items || [], p));
-      if (state.nextSourcePage > state.totalSourcePages) state.exhausted = true;
+    const scanToTarget = async () => {
+      while (!state.exhausted && state.items.length < targetCount) {
+        const currentPage = state.nextSourcePage;
+        const sourcePage = currentPage === 1
+          ? state.firstPage
+          : await state.source.load(currentPage);
+        state.nextSourcePage = currentPage + 1;
+        state.items.push(...await enrichAndMatch(sourcePage.items || [], p, state.sourceKey));
+        if (currentPage >= state.totalSourcePages || !(sourcePage.items || []).length) state.exhausted = true;
+      }
+    };
+    // Một bộ lọc chỉ được quét tuần tự một lần, kể cả khi bấm phân trang liên tiếp.
+    if (state.scanPromise) await state.scanPromise;
+    if (!state.exhausted && state.items.length < targetCount) {
+      state.scanPromise = scanToTarget();
+      try { await state.scanPromise; } finally { state.scanPromise = null; }
     }
 
     const start = (page - 1) * FILTER_PAGE_SIZE;
@@ -776,6 +804,7 @@ const List = (() => {
 
   return {
     async load(params, page = 1) {
+      const version = ++loadVersion;
       const grid = qs('#filmGrid'), empty = qs('#emptyState'), pagi = qs('#pagination');
       empty.classList.add('hidden');
       pagi.innerHTML = '';
@@ -785,6 +814,7 @@ const List = (() => {
 
       try {
         const data = await fetchPage(params, page);
+        if (version !== loadVersion) return;
         const items = data.items || [];
         if (!items.length) {
           grid.innerHTML = '';
@@ -822,6 +852,7 @@ const List = (() => {
           }
         }
       } catch {
+        if (version !== loadVersion) return;
         grid.innerHTML = `<div style="text-align:center;padding:60px;grid-column:1/-1;color:var(--text3)">Không thể kết nối máy chủ phim. Vui lòng thử lại sau.</div>`;
       }
     }
@@ -1580,31 +1611,41 @@ qs('#signupFormEl').addEventListener('submit', e => {
 });
 
 /* ═══════════════════════════════════════════════════════
-   13. QUICK FILTER BAR & INITIALIZATION
+   13. TOP MENU
 ═══════════════════════════════════════════════════════ */
-const FilterBar = (() => {
+const TopMenu = (() => {
   const GENRES = [
     { v: 'hanh-dong', l: 'Hành Động' }, { v: 'tinh-cam', l: 'Tình Cảm' },
     { v: 'hai-huoc', l: 'Hài Hước' }, { v: 'tam-ly', l: 'Tâm Lý' },
     { v: 'hoat-hinh', l: 'Hoạt Hình' }, { v: 'kinh-di', l: 'Kinh Dị' },
     { v: 'vien-tuong', l: 'Viễn Tưởng' }, { v: 'phieu-luu', l: 'Phiêu Lưu' },
-    { v: 'co-trang', l: 'Cổ Trang' }, { v: 'chien-tranh', l: 'Chiến Tranh' }
+    { v: 'co-trang', l: 'Cổ Trang' }, { v: 'chien-tranh', l: 'Chiến Tranh' },
+    { v: 'vo-thuat', l: 'Võ Thuật' }, { v: 'bi-an', l: 'Bí Ẩn' },
+    { v: 'gia-dinh', l: 'Gia Đình' }, { v: 'am-nhac', l: 'Âm Nhạc' },
+    { v: 'the-thao', l: 'Thể Thao' }, { v: 'hoc-duong', l: 'Học Đường' },
+    { v: 'tai-lieu', l: 'Tài Liệu' }, { v: 'than-thoai', l: 'Thần Thoại' },
+    { v: 'chinh-kich', l: 'Chính Kịch' }, { v: 'kinh-dien', l: 'Kinh Điển' },
+    { v: 'gay-can', l: 'Gay Cấn' }, { v: 'phim-18', l: 'Phim 18+' }
   ];
   const COUNTRIES = [
     { v: 'my', l: 'Mỹ' }, { v: 'han-quoc', l: 'Hàn Quốc' },
     { v: 'trung-quoc', l: 'Trung Quốc' }, { v: 'viet-nam', l: 'Việt Nam' },
     { v: 'nhat-ban', l: 'Nhật Bản' }, { v: 'thai-lan', l: 'Thái Lan' },
-    { v: 'anh', l: 'Anh' }, { v: 'phap', l: 'Pháp' }
+    { v: 'anh', l: 'Anh' }, { v: 'phap', l: 'Pháp' },
+    { v: 'an-do', l: 'Ấn Độ' }, { v: 'hong-kong', l: 'Hồng Kông' },
+    { v: 'dai-loan', l: 'Đài Loan' }, { v: 'uc', l: 'Úc' },
+    { v: 'canada', l: 'Canada' }, { v: 'duc', l: 'Đức' },
+    { v: 'tay-ban-nha', l: 'Tây Ban Nha' }, { v: 'tho-nhi-ky', l: 'Thổ Nhĩ Kỳ' },
+    { v: 'indonesia', l: 'Indonesia' }, { v: 'nga', l: 'Nga' },
+    { v: 'ha-lan', l: 'Hà Lan' }, { v: 'y', l: 'Ý' },
+    { v: 'philippines', l: 'Philippines' }, { v: 'singapore', l: 'Singapore' }
   ];
 
-  function fillSelect(selId, opts) {
-    const sel = qs(`#${selId}`);
-    opts.forEach(o => {
-      const opt = el('option');
-      opt.value = o.v;
-      opt.textContent = o.l;
-      sel.appendChild(opt);
-    });
+  function renderOptions(containerId, options, kind) {
+    const container = qs(`#${containerId}`);
+    container.innerHTML = options.map(({ v, l }) =>
+      `<button class="top-menu-option" type="button" data-filter-kind="${kind}" data-filter-value="${v}" data-filter-label="${l}">${l}</button>`
+    ).join('');
   }
 
   let inited = false;
@@ -1612,21 +1653,10 @@ const FilterBar = (() => {
     init() {
       if (inited) return;
       inited = true;
-      fillSelect('filterGenre', GENRES);
-      fillSelect('filterCountry', COUNTRIES);
-      fillSelect('filterLang', [
-        { v: 'vietsub', l: 'Vietsub' },
-        { v: 'thuyet-minh', l: 'Thuyết minh' },
-        { v: 'long-tieng', l: 'Lồng tiếng' }
-      ]);
-      const selYear = qs('#filterYear');
-      const curYear = new Date().getFullYear();
-      for (let y = curYear; y >= 2012; y--) {
-        const o = el('option');
-        o.value = y;
-        o.textContent = `Năm ${y}`;
-        selYear.appendChild(o);
-      }
+      renderOptions('genreMenu', GENRES, 'genre');
+      renderOptions('countryMenu', COUNTRIES, 'country');
+      renderOptions('mobileGenreMenu', GENRES, 'genre');
+      renderOptions('mobileCountryMenu', COUNTRIES, 'country');
     }
   };
 })();
@@ -1648,42 +1678,28 @@ document.addEventListener('DOMContentLoaded', () => {
     qs('#themeIcon').textContent = '☾';
   }
 
-  // Filter Apply & Reset
-  qs('#filterApply').addEventListener('click', () => {
-    const g = qs('#filterGenre').value;
-    const c = qs('#filterCountry').value;
-    const y = qs('#filterYear').value;
-    const l = qs('#filterLang').value;
-    if (!g && !c && !y && !l) return toast('Vui lòng chọn ít nhất một tiêu chí lọc.');
-
-    const p = {};
-    const labels = [];
-    if (g) {
-      p.genre = g;
-      labels.push(qs('#filterGenre option:checked').text);
-    }
-    if (c) {
-      p.country = c;
-      labels.push(qs('#filterCountry option:checked').text);
-    }
-    if (y) {
-      p.year = y;
-      labels.push(`Năm ${y}`);
-    }
-    if (l) {
-      p.lang = l;
-      labels.push(qs('#filterLang option:checked').text);
-    }
-    p.title = labels.join(' · ');
-
-    Router.go('list', p);
-  });
-  qs('#filterReset').addEventListener('click', () => {
-    qsa('.select-group select').forEach(s => s.value = '');
-  });
-
   // Navigation Links
   document.addEventListener('click', e => {
+    if (!e.target.closest('.top-menu-group')) {
+      qsa('.top-menu-toggle').forEach(button => button.setAttribute('aria-expanded', 'false'));
+      qsa('.top-menu-options').forEach(menu => menu.classList.remove('open'));
+    }
+    const toggle = e.target.closest('.top-menu-toggle');
+    if (toggle) {
+      const expanded = toggle.getAttribute('aria-expanded') === 'true';
+      toggle.setAttribute('aria-expanded', String(!expanded));
+      qs(`#${toggle.getAttribute('aria-controls')}`).classList.toggle('open', !expanded);
+      return;
+    }
+    const filterOption = e.target.closest('[data-filter-kind]');
+    if (filterOption) {
+      const kind = filterOption.dataset.filterKind;
+      Router.go('list', { [kind]: filterOption.dataset.filterValue, title: filterOption.dataset.filterLabel });
+      qsa('.top-menu-toggle').forEach(button => button.setAttribute('aria-expanded', 'false'));
+      qsa('.top-menu-options').forEach(menu => menu.classList.remove('open'));
+      qs('#mobileNav').classList.remove('open');
+      return;
+    }
     const link = e.target.closest('[data-page]');
     if (!link) return;
     e.preventDefault();
@@ -1719,7 +1735,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Khởi động
   updateAuthUI();
-  FilterBar.init();
+  TopMenu.init();
   if (!Router.restore()) Router.go('home');
 
   window.addEventListener('popstate', () => {

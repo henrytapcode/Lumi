@@ -33,6 +33,18 @@
     <a class="nav-link" data-page="phim-le" href="#">Phim lẻ</a>
     <a class="nav-link" data-page="phim-bo" href="#">Phim bộ</a>
     <a class="nav-link" data-page="tv-shows" href="#">TV Shows</a>
+    <div class="top-menu-group">
+      <button class="nav-link top-menu-toggle" type="button" aria-expanded="false" aria-controls="genreMenu">
+        <span>Thể loại</span><span class="top-menu-chevron" aria-hidden="true">⌄</span>
+      </button>
+      <div class="top-menu-options" id="genreMenu"></div>
+    </div>
+    <div class="top-menu-group">
+      <button class="nav-link top-menu-toggle" type="button" aria-expanded="false" aria-controls="countryMenu">
+        <span>Quốc gia</span><span class="top-menu-chevron" aria-hidden="true">⌄</span>
+      </button>
+      <div class="top-menu-options" id="countryMenu"></div>
+    </div>
   </nav>
   <div class="top-actions">
     <div class="search-bar-wrap" id="globalSearchWrap">
@@ -58,6 +70,18 @@
   <a class="nav-link" data-page="phim-le">Phim lẻ</a>
   <a class="nav-link" data-page="phim-bo">Phim bộ</a>
   <a class="nav-link" data-page="tv-shows">TV Shows</a>
+  <div class="mobile-menu-group">
+    <button class="nav-link top-menu-toggle" type="button" aria-expanded="false" aria-controls="mobileGenreMenu">
+      <span>Thể loại</span><span class="top-menu-chevron" aria-hidden="true">⌄</span>
+    </button>
+    <div class="top-menu-options" id="mobileGenreMenu"></div>
+  </div>
+  <div class="mobile-menu-group">
+    <button class="nav-link top-menu-toggle" type="button" aria-expanded="false" aria-controls="mobileCountryMenu">
+      <span>Quốc gia</span><span class="top-menu-chevron" aria-hidden="true">⌄</span>
+    </button>
+    <div class="top-menu-options" id="mobileCountryMenu"></div>
+  </div>
 </div>
 
 <!-- ── MAIN CONTENT ───────────────────────────────────────── -->
@@ -78,32 +102,6 @@
         </div>
       </div>
       <div class="hero-dots" id="heroDots"></div>
-    </section>
-
-    <!-- Quick filter bar -->
-    <section class="quick-filter-bar">
-      <div class="container">
-        <div class="filter-row">
-          <div class="select-group">
-            <label>Thể loại</label>
-            <select id="filterGenre"><option value="">Tất cả thể loại</option></select>
-          </div>
-          <div class="select-group">
-            <label>Quốc gia</label>
-            <select id="filterCountry"><option value="">Tất cả quốc gia</option></select>
-          </div>
-          <div class="select-group">
-            <label>Năm phát hành</label>
-            <select id="filterYear"><option value="">Tất cả năm</option></select>
-          </div>
-          <div class="select-group">
-            <label>Ngôn ngữ</label>
-            <select id="filterLang"><option value="">Tất cả ngôn ngữ</option></select>
-          </div>
-          <button class="filter-apply-btn" id="filterApply">Lọc phim</button>
-          <button class="filter-reset-btn" id="filterReset">✕ Xóa lọc</button>
-        </div>
-      </div>
     </section>
 
     <!-- Home Sections -->
