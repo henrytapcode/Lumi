@@ -15,6 +15,7 @@
 ═══════════════════════════════════════════════════════ */
 const CFG = {
   BASE: 'https://phim.nguonc.com/api',
+  CINEMA_BASE: 'https://phimapi.com',
   CACHE_TTL: { list: 6 * 60 * 1000, detail: 20 * 60 * 1000, search: 3 * 60 * 1000 },
   TIMEOUT: 12000,
   RETRY: 2,
@@ -65,6 +66,8 @@ const Cache = (() => {
    2. API CLIENT (Pre-cached & low latency)
 ═══════════════════════════════════════════════════════ */
 const API = (() => {
+  const cinemaSlugs = new Set();
+  const pending = new Map();
   async function fetchWithTimeout(url, opts = {}) {
     const ctrl = new AbortController();
     const tid = setTimeout(() => ctrl.abort(), CFG.TIMEOUT);
@@ -102,10 +105,53 @@ const API = (() => {
     throw lastErr;
   }
 
+  function once(key, request) {
+    if (pending.has(key)) return pending.get(key);
+    const promise = request().finally(() => pending.delete(key));
+    pending.set(key, promise);
+    return promise;
+  }
+
+  function normalizeCinemaDetail(data) {
+    const movie = data.movie || {};
+    movie.category = {
+      genre: { group: { name: 'Thể loại' }, list: movie.category || [] },
+      country: { group: { name: 'Quốc gia' }, list: movie.country || [] }
+    };
+    movie.episodes = (data.episodes || []).map(server => ({
+      server_name: server.server_name,
+      items: (server.server_data || []).map(item => ({
+        name: item.name, slug: item.slug,
+        embed: item.link_embed || item.link_m3u8 || ''
+      }))
+    }));
+    return { movie };
+  }
+
+  function cinemaList(page) {
+    const url = `${CFG.CINEMA_BASE}/danh-sach/phim-chieu-rap?page=${page}`;
+    return req(url, CFG.CACHE_TTL.list).then(data => {
+      (data.items || []).forEach(item => cinemaSlugs.add(item.slug));
+      return data;
+    });
+  }
+
+  function cinemaDetail(slug) {
+    return once(`cinema-detail:${slug}`, () =>
+      req(`${CFG.CINEMA_BASE}/phim/${encodeURIComponent(slug)}`, CFG.CACHE_TTL.detail)
+        .then(normalizeCinemaDetail)
+    );
+  }
+
   return {
     newUpdated: (p = 1) => req(`${CFG.BASE}/films/phim-moi-cap-nhat?page=${p}`, CFG.CACHE_TTL.list, true),
-    listBySlug: (s, p = 1) => req(`${CFG.BASE}/films/danh-sach/${s}?page=${p}`),
-    detail: (s) => req(`${CFG.BASE}/film/${s}`, CFG.CACHE_TTL.detail),
+    // Nguồn cũ trả về 404 cho phim-chieu-rap; nguồn này có cùng cấu trúc dữ liệu.
+    listBySlug: (s, p = 1) => s === 'phim-chieu-rap'
+      ? cinemaList(p)
+      : req(`${CFG.BASE}/films/danh-sach/${s}?page=${p}`),
+    detail: (s) => cinemaSlugs.has(s)
+      ? cinemaDetail(s)
+      : once(`detail:${s}`, () => req(`${CFG.BASE}/film/${s}`, CFG.CACHE_TTL.detail)),
     byGenre: (s, p = 1) => req(`${CFG.BASE}/films/the-loai/${s}?page=${p}`),
     byCountry: (s, p = 1) => req(`${CFG.BASE}/films/quoc-gia/${s}?page=${p}`),
     byYear: (y, p = 1) => req(`${CFG.BASE}/films/nam-phat-hanh/${y}?page=${p}`),
@@ -609,7 +655,8 @@ const Home = (() => {
 ═══════════════════════════════════════════════════════ */
 const List = (() => {
   const FILTER_PAGE_SIZE = 18;
-  const FILTER_REQUEST_CONCURRENCY = 4;
+  // Tải song song và khử trùng request chi tiết giúp lọc nhiều tiêu chí phản hồi nhanh hơn.
+  const FILTER_REQUEST_CONCURRENCY = 10;
   const filteredResults = new Map();
 
   function slugify(v) {
@@ -1223,6 +1270,59 @@ function openAuthModal(tab = 'login') {
   qs('#loginForm').classList.toggle('hidden', tab !== 'login');
   qs('#signupForm').classList.toggle('hidden', tab !== 'signup');
 }
+
+// Google Identity Services opens Google's own account chooser popup.
+const RealGoogleAuth = (() => {
+  const clientId = document.querySelector('meta[name="google-client-id"]')?.content.trim();
+  let tokenClient;
+
+  async function loadLibrary() {
+    if (window.google?.accounts?.oauth2) return;
+    await new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'https://accounts.google.com/gsi/client';
+      script.async = true;
+      script.onload = resolve;
+      script.onerror = () => reject(new Error('Unable to load Google sign-in.'));
+      document.head.appendChild(script);
+    });
+  }
+
+  async function login() {
+    if (!clientId) return toast('Google Client ID is not configured. See README.');
+    try {
+      await loadLibrary();
+      tokenClient ||= google.accounts.oauth2.initTokenClient({
+        client_id: clientId,
+        scope: 'openid email profile',
+        callback: async response => {
+          if (response.error) return toast('Google sign-in was cancelled.');
+          try {
+            const profile = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+              headers: { Authorization: `Bearer ${response.access_token}` }
+            }).then(r => r.ok ? r.json() : Promise.reject(new Error('Could not read Google profile.')));
+            Auth.googleLogin(profile.name, profile.email, profile.picture);
+            qs('#authModal').classList.add('hidden');
+            updateAuthUI();
+            toast(`Signed in with Google: ${profile.name}`);
+          } catch (error) {
+            toast(error.message || 'Google sign-in could not be completed.');
+          }
+        }
+      });
+      // Force the account chooser even when a Google session is already active.
+      tokenClient.requestAccessToken({ prompt: 'select_account' });
+    } catch (error) {
+      toast(error.message || 'Could not open Google sign-in.');
+    }
+  }
+
+  // Capture phase prevents the former mock-account click handler from running.
+  qs('#googleLoginBtn').addEventListener('click', event => {
+    event.stopImmediatePropagation();
+    login();
+  }, true);
+})();
 qs('#authModalClose').addEventListener('click', () => qs('#authModal').classList.add('hidden'));
 qsa('.auth-tab').forEach(t => t.addEventListener('click', () => openAuthModal(t.dataset.tab)));
 
