@@ -15,7 +15,6 @@
 ═══════════════════════════════════════════════════════ */
 const CFG = {
   BASE: 'https://phim.nguonc.com/api',
-  CINEMA_BASE: 'https://phimapi.com',
   CACHE_TTL: { list: 6 * 60 * 1000, detail: 20 * 60 * 1000, search: 3 * 60 * 1000 },
   TIMEOUT: 12000,
   RETRY: 2,
@@ -66,7 +65,6 @@ const Cache = (() => {
    2. API CLIENT (Pre-cached & low latency)
 ═══════════════════════════════════════════════════════ */
 const API = (() => {
-  const cinemaSlugs = new Set();
   const pending = new Map();
   async function fetchWithTimeout(url, opts = {}) {
     const ctrl = new AbortController();
@@ -112,46 +110,10 @@ const API = (() => {
     return promise;
   }
 
-  function normalizeCinemaDetail(data) {
-    const movie = data.movie || {};
-    movie.category = {
-      genre: { group: { name: 'Thể loại' }, list: movie.category || [] },
-      country: { group: { name: 'Quốc gia' }, list: movie.country || [] }
-    };
-    movie.episodes = (data.episodes || []).map(server => ({
-      server_name: server.server_name,
-      items: (server.server_data || []).map(item => ({
-        name: item.name, slug: item.slug,
-        embed: item.link_embed || item.link_m3u8 || ''
-      }))
-    }));
-    return { movie };
-  }
-
-  function cinemaList(page) {
-    const url = `${CFG.CINEMA_BASE}/danh-sach/phim-chieu-rap?page=${page}`;
-    return req(url, CFG.CACHE_TTL.list).then(data => {
-      (data.items || []).forEach(item => cinemaSlugs.add(item.slug));
-      return data;
-    });
-  }
-
-  function cinemaDetail(slug) {
-    return once(`cinema-detail:${slug}`, () =>
-      req(`${CFG.CINEMA_BASE}/phim/${encodeURIComponent(slug)}`, CFG.CACHE_TTL.detail)
-        .then(normalizeCinemaDetail)
-    );
-  }
-
   return {
     newUpdated: (p = 1) => req(`${CFG.BASE}/films/phim-moi-cap-nhat?page=${p}`, CFG.CACHE_TTL.list, true),
-    // Nguồn cũ trả về 404 cho phim-chieu-rap; nguồn này có cùng cấu trúc dữ liệu.
-    listBySlug: (s, p = 1) => s === 'phim-chieu-rap'
-      ? cinemaList(p)
-      : req(`${CFG.BASE}/films/danh-sach/${s}?page=${p}`),
-    detail: (s) => cinemaSlugs.has(s)
-      ? cinemaDetail(s)
-      : once(`detail:${s}`, () => req(`${CFG.BASE}/film/${s}`, CFG.CACHE_TTL.detail)),
+    listBySlug: (s, p = 1) => req(`${CFG.BASE}/films/danh-sach/${s}?page=${p}`),
+    detail: (s) => once(`detail:${s}`, () => req(`${CFG.BASE}/film/${s}`, CFG.CACHE_TTL.detail)),
     byGenre: (s, p = 1) => req(`${CFG.BASE}/films/the-loai/${s}?page=${p}`),
     byCountry: (s, p = 1) => req(`${CFG.BASE}/films/quoc-gia/${s}?page=${p}`),
     byYear: (y, p = 1) => req(`${CFG.BASE}/films/nam-phat-hanh/${y}?page=${p}`),
@@ -640,7 +602,7 @@ const Home = (() => {
         loadRow(API.newUpdated(1), 'rowNew'),
         loadRow(API.listBySlug('phim-le', 1), 'rowPhimLe'),
         loadRow(API.listBySlug('phim-bo', 1), 'rowPhimBo'),
-        loadRow(API.listBySlug('phim-chieu-rap', 1), 'rowRap'),
+        loadRow(API.listBySlug('tv-shows', 1), 'rowTVShows'),
       ]);
       if (res[0].status === 'fulfilled' && res[0].value?.length) {
         initHero(res[0].value);
@@ -807,7 +769,7 @@ const List = (() => {
       'new': 'Phim Mới Cập Nhật',
       'phim-le': 'Danh Sách Phim Lẻ',
       'phim-bo': 'Danh Sách Phim Bộ',
-      'phim-chieu-rap': 'Phim Chiếu Rạp'
+      'tv-shows': 'TV Shows'
     };
     return p.title || (p.keyword ? `Kết quả tìm kiếm: "${p.keyword}"` : l[p.slug || p.type] || 'Danh sách phim');
   }
@@ -1729,7 +1691,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (p === 'home') {
       Home.reset();
       Router.go('home');
-    } else if (['new', 'phim-le', 'phim-bo', 'phim-chieu-rap'].includes(p)) {
+    } else if (['new', 'phim-le', 'phim-bo', 'tv-shows'].includes(p)) {
       Router.go('list', { type: p, slug: p === 'new' ? undefined : p });
     } else {
       Router.go('list', { slug: p });

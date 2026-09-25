@@ -28,7 +28,7 @@ web/
 - ✅ **Lọc theo quốc gia** — 17+ quốc gia
 - ✅ **Lọc theo năm sản xuất** — 2010 đến hiện tại
 - ✅ **Lọc theo ngôn ngữ** — Vietsub / Thuyết minh / Lồng tiếng
-- ✅ **Tab loại phim** — Mới cập nhật / Phim lẻ / Phim bộ / Chiếu rạp
+- ✅ **Tab loại phim** — Mới cập nhật / Phim lẻ / Phim bộ / TV Shows
 
 ### API endpoints sử dụng
 | Mục đích | Endpoint |
