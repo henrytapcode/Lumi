@@ -1,4 +1,4 @@
-# Lumi — Web xem phim miễn phí
+# Ben — Web xem phim miễn phí
 
 Nền tảng xem phim trực tuyến xây dựng bằng **Vanilla JS + CSS thuần** (không framework),
 kết nối tới API `phim.nguonc.com`.
@@ -40,7 +40,7 @@ web/
 | Theo quốc gia | `GET /films/quoc-gia/{slug}?page={n}` |
 | Theo năm | `GET /films/nam-phat-hanh/{year}?page={n}` |
 | Theo ngôn ngữ | `GET /films/ngon-ngu/{slug}?page={n}` |
-| Tìm kiếm | `GET /films/search?keyword={kw}` |
+| Tìm kiếm | `GET /films/search?keyword={kw}&page={n}` |
 
 ### Cache & hiệu năng
 - **TTL cache**: list = 5 phút · detail = 15 phút · search = 2 phút

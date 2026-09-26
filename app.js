@@ -1,5 +1,5 @@
 /**
- * Lumi – Movie Website (Vanilla JS)
+ * Ben – Movie Website (Vanilla JS)
  * Cải thiện:
  *  - Tài khoản & Đăng nhập Google (Google Chooser Modal, lưu thông tin, đổi mật khẩu)
  *  - Lưu dữ liệu lịch sử xem chi tiết, resume xem tiếp, danh sách tập đã xem (watched badge)
@@ -132,7 +132,7 @@ const API = (() => {
     byCountry: (s, p = 1) => req(`${CFG.BASE}/films/quoc-gia/${s}?page=${p}`),
     byYear: (y, p = 1) => req(`${CFG.BASE}/films/nam-phat-hanh/${y}?page=${p}`),
     byLang: (s, p = 1) => req(`${CFG.BASE}/films/ngon-ngu/${s}?page=${p}`),
-    search: (kw) => req(`${CFG.BASE}/films/search?keyword=${encodeURIComponent(kw)}`, CFG.CACHE_TTL.search),
+    search: (kw, p = 1) => req(`${CFG.BASE}/films/search?keyword=${encodeURIComponent(kw)}&page=${p}`, CFG.CACHE_TTL.search),
   };
 })();
 
@@ -777,7 +777,7 @@ const List = (() => {
 
   async function fetchPage(p, page) {
     if (p._favs) return { items: p._favs, paginate: { current_page: 1, total_page: 1 } };
-    if (p.keyword) return API.search(p.keyword);
+    if (p.keyword) return API.search(p.keyword, page);
 
     const filterCount = [p.genre, p.country, p.year, p.lang].filter(Boolean).length;
     if (filterCount > 1) {
@@ -832,7 +832,7 @@ const List = (() => {
         renderFilms(items, grid);
 
         // Render pagination
-        if (!params.keyword && !params._favs && tot > 1) {
+        if (!params._favs && tot > 1) {
           const start = Math.max(1, page - 2);
           const end = Math.min(tot, page + 2);
           if (page > 1) {
@@ -1523,7 +1523,7 @@ const ProfileUI = (() => {
     qs('#profileEmail').textContent = u.email;
 
     const isGoogle = u.type === 'google';
-    qs('#profileBadge').textContent = isGoogle ? '✓ Google Account Verified' : 'Lumi Member';
+    qs('#profileBadge').textContent = isGoogle ? '✓ Google Account Verified' : 'Ben Member';
     qs('#profileBadge').style.color = isGoogle ? '#4285f4' : 'var(--green)';
 
     qs('#profileNameInput').value = u.name;
