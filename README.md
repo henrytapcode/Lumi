@@ -50,8 +50,9 @@ web/
 - Debounce tìm kiếm 350ms
 
 ### Tài khoản
-- ✅ **Đăng ký / Đăng nhập** (mock localStorage)
-- ✅ **Đăng nhập Google** (stub)
+- ✅ **Đăng ký / Đăng nhập** — lưu tài khoản trên trình duyệt bằng localStorage
+- **Đăng nhập Google** — cần cấu hình OAuth Client ID
+- Yêu thích, lịch sử xem và tập đã xem được lưu cục bộ theo tài khoản
 - ✅ **Phim yêu thích** — lưu/xoá, xem danh sách
 - ✅ **User dropdown menu** sau khi đăng nhập
 
@@ -64,6 +65,10 @@ web/
 
 Mở bằng **Live Server** trong VS Code (`Go Live`) hoặc bất kỳ HTTP server nào.
 *Không cần build, không cần Node.js.*
+
+## Giới hạn lưu trữ
+
+`localStorage` chỉ dùng chung trong cùng một trình duyệt và cùng origin. Tài khoản, yêu thích, lịch sử và tiến độ xem **không tự đồng bộ** giữa PC và điện thoại. Đăng nhập Google cũng chỉ dùng để lấy thông tin tài khoản; dữ liệu ứng dụng vẫn được lưu cục bộ trên thiết bị.
 
 ## Ghi chú kỹ thuật
 

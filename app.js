@@ -147,18 +147,23 @@ const Auth = (() => {
   const LS_WATCHED = 'lumi_watched_eps';
 
   let user = null;
-  try { user = JSON.parse(localStorage.getItem(LS_USER)); } catch(_) {}
+  try { user = JSON.parse(localStorage.getItem(LS_USER)); } catch {}
 
   function getUsersDB() {
-    try { return JSON.parse(localStorage.getItem(LS_USERS_DB) || '{}'); } catch { return {}; }
+    try {
+      const db = JSON.parse(localStorage.getItem(LS_USERS_DB) || '{}');
+      return db && typeof db === 'object' && !Array.isArray(db) ? db : {};
+    } catch {
+      return {};
+    }
   }
   function saveUsersDB(db) {
-    try { localStorage.setItem(LS_USERS_DB, JSON.stringify(db)); } catch(_) {}
+    localStorage.setItem(LS_USERS_DB, JSON.stringify(db));
   }
-  function saveUser(u) {
-    user = u;
-    if (u) localStorage.setItem(LS_USER, JSON.stringify(u));
+  function saveUser(nextUser) {
+    if (nextUser) localStorage.setItem(LS_USER, JSON.stringify(nextUser));
     else localStorage.removeItem(LS_USER);
+    user = nextUser;
   }
   function userScopedKey(prefix) {
     const email = user?.email || (() => {
@@ -182,14 +187,16 @@ const Auth = (() => {
   function writeJson(key, value) {
     try {
       localStorage.setItem(key, JSON.stringify(value));
-    } catch {}
+    } catch (error) {
+      console.error(`Could not save ${key} to localStorage:`, error);
+      toast('Không thể lưu dữ liệu trên thiết bị này. Hãy kiểm tra dung lượng bộ nhớ trình duyệt.');
+    }
   }
 
   return {
     current: () => user,
     isLoggedIn: () => !!user,
 
-    // Đăng ký tài khoản thường
     signup(name, email, password) {
       name = name.trim();
       email = email.trim().toLowerCase();
@@ -206,37 +213,42 @@ const Auth = (() => {
         type: 'local',
         createdAt: Date.now()
       };
-      db[email] = newUser;
-      saveUsersDB(db);
-      saveUser(newUser);
-      return { ok: true };
+      try {
+        db[email] = newUser;
+        saveUsersDB(db);
+        saveUser(newUser);
+        return { ok: true };
+      } catch (error) {
+        console.error('Could not save account to localStorage:', error);
+        delete db[email];
+        return { ok: false, err: 'Không thể lưu tài khoản trên thiết bị này. Hãy kiểm tra bộ nhớ trình duyệt.' };
+      }
     },
 
-    // Đăng nhập tài khoản thường
     login(email, password) {
       email = email.trim().toLowerCase();
       if (!email.includes('@')) return { ok: false, err: 'Email không đúng định dạng.' };
       if (!password) return { ok: false, err: 'Vui lòng nhập mật khẩu.' };
 
-      const db = getUsersDB();
-      const existing = db[email];
-      if (!existing) {
+      const existing = getUsersDB()[email];
+      if (!existing || existing.password !== password) {
         return { ok: false, err: 'Email hoặc mật khẩu không chính xác.' };
       }
-      if (existing.password !== password) {
-        return { ok: false, err: 'Email hoặc mật khẩu không chính xác.' };
+      try {
+        saveUser(existing);
+        return { ok: true };
+      } catch (error) {
+        console.error('Could not restore account from localStorage:', error);
+        return { ok: false, err: 'Không thể lưu phiên đăng nhập trên thiết bị này.' };
       }
-      saveUser(existing);
-      return { ok: true };
     },
 
-    // Đăng nhập Google
     googleLogin(name, email, avatar = '') {
       email = (email || 'google.user@gmail.com').toLowerCase().trim();
       name = name ? name.trim() : 'Người dùng Google';
       const db = getUsersDB();
       const existing = db[email];
-      const u = {
+      const googleUser = {
         name,
         email,
         avatar: avatar || name[0].toUpperCase(),
@@ -244,28 +256,33 @@ const Auth = (() => {
         createdAt: existing?.createdAt || Date.now(),
         password: existing?.password || undefined
       };
-      db[email] = u;
+      db[email] = googleUser;
       saveUsersDB(db);
-      saveUser(u);
+      saveUser(googleUser);
       return { ok: true };
     },
 
-    // Cập nhật thông tin
     updateInfo(name) {
-      if (!user) return { ok: false };
-      user.name = name.trim();
-      user.avatar = user.name[0].toUpperCase();
-      saveUser(user);
-      const db = getUsersDB();
-      if (db[user.email]) {
-        db[user.email].name = user.name;
-        db[user.email].avatar = user.avatar;
-        saveUsersDB(db);
+      if (!user) return { ok: false, err: 'Chưa đăng nhập.' };
+      name = name.trim();
+      if (!name) return { ok: false, err: 'Vui lòng nhập họ và tên.' };
+      user.name = name;
+      user.avatar = name[0].toUpperCase();
+      try {
+        saveUser(user);
+        const db = getUsersDB();
+        if (db[user.email]) {
+          db[user.email].name = user.name;
+          db[user.email].avatar = user.avatar;
+          saveUsersDB(db);
+        }
+        return { ok: true };
+      } catch (error) {
+        console.error('Could not update account in localStorage:', error);
+        return { ok: false, err: 'Không thể lưu thay đổi trên thiết bị này.' };
       }
-      return { ok: true };
     },
 
-    // Đổi mật khẩu
     changePassword(oldPw, newPw) {
       if (!user) return { ok: false, err: 'Chưa đăng nhập.' };
       if (user.type === 'google') {
@@ -281,14 +298,19 @@ const Auth = (() => {
         return { ok: false, err: 'Mật khẩu mới không được trùng với mật khẩu cũ.' };
       }
 
-      user.password = newPw;
-      saveUser(user);
+      const previousPassword = user.password;
       const db = getUsersDB();
-      if (db[user.email]) {
-        db[user.email].password = newPw;
+      user.password = newPw;
+      if (db[user.email]) db[user.email].password = newPw;
+      try {
         saveUsersDB(db);
+        saveUser(user);
+        return { ok: true };
+      } catch (error) {
+        user.password = previousPassword;
+        console.error('Could not update password in localStorage:', error);
+        return { ok: false, err: 'Không thể lưu mật khẩu mới trên thiết bị này.' };
       }
-      return { ok: true };
     },
 
     logout() {
@@ -837,16 +859,23 @@ const List = (() => {
           const end = Math.min(tot, page + 2);
           if (page > 1) {
             const prev = el('button', 'page-btn', '‹');
+            prev.type = 'button';
+            prev.setAttribute('aria-label', 'Trang trước');
             prev.onclick = () => List.load(params, page - 1);
             pagi.appendChild(prev);
           }
           for (let i = start; i <= end; i++) {
             const b = el('button', `page-btn ${i === page ? 'active' : ''}`, i);
+            b.type = 'button';
+            b.setAttribute('aria-label', `Trang ${i}`);
+            if (i === page) b.setAttribute('aria-current', 'page');
             b.onclick = () => List.load(params, i);
             pagi.appendChild(b);
           }
           if (page < tot) {
             const next = el('button', 'page-btn', '›');
+            next.type = 'button';
+            next.setAttribute('aria-label', 'Trang tiếp theo');
             next.onclick = () => List.load(params, page + 1);
             pagi.appendChild(next);
           }
@@ -1319,48 +1348,6 @@ const RealGoogleAuth = (() => {
 qs('#authModalClose').addEventListener('click', () => qs('#authModal').classList.add('hidden'));
 qsa('.auth-tab').forEach(t => t.addEventListener('click', () => openAuthModal(t.dataset.tab)));
 
-// Google Account Chooser
-const GoogleAuthUI = (() => {
-  const modal = qs('#googleChooserModal');
-  const customBox = qs('#googleCustomBox');
-
-  qs('#googleLoginBtn').addEventListener('click', () => {
-    qs('#authModal').classList.add('hidden');
-    customBox.classList.add('hidden');
-    modal.classList.remove('hidden');
-  });
-
-  qs('#googleChooserClose').addEventListener('click', () => modal.classList.add('hidden'));
-
-  // Chọn từ tài khoản có sẵn
-  qsa('.google-acc-item[data-email]').forEach(item => {
-    item.addEventListener('click', () => {
-      const email = item.dataset.email;
-      const name = item.dataset.name;
-      const avatar = item.dataset.avatar;
-      Auth.googleLogin(name, email, avatar);
-      modal.classList.add('hidden');
-      updateAuthUI();
-      toast(`Đã đăng nhập Google: ${name} 🎉`);
-    });
-  });
-
-  // Tùy chọn nhập tài khoản Google khác
-  qs('#googleCustomAccBtn').addEventListener('click', () => {
-    customBox.classList.toggle('hidden');
-  });
-
-  qs('#customGoogleSubmit').addEventListener('click', () => {
-    const name = qs('#customGoogleName').value.trim() || 'Google User';
-    const email = qs('#customGoogleEmail').value.trim();
-    if (!email.includes('@')) return toast('Vui lòng nhập đúng địa chỉ Gmail.');
-    Auth.googleLogin(name, email, name[0].toUpperCase());
-    modal.classList.add('hidden');
-    updateAuthUI();
-    toast(`Đã đăng nhập Google: ${name} 🎉`);
-  });
-})();
-
 // Profile Modal Controller (Thông tin, Lịch sử xem, Phim yêu thích, Đổi mật khẩu)
 const ProfileUI = (() => {
   const mod = qs('#profileModal');
@@ -1456,14 +1443,18 @@ const ProfileUI = (() => {
   // Lưu thông tin cơ bản
   qs('#profileInfoForm').addEventListener('submit', e => {
     e.preventDefault();
-    const res = Auth.updateInfo(qs('#profileNameInput').value);
     const err = qs('#profileInfoError');
+    const res = Auth.updateInfo(qs('#profileNameInput').value);
     if (res.ok) {
       err.textContent = 'Đã lưu thay đổi họ tên!';
       err.className = 'form-success';
       err.classList.remove('hidden');
       updateAuthUI();
       open();
+    } else {
+      err.textContent = res.err;
+      err.className = 'form-error';
+      err.classList.remove('hidden');
     }
   });
 
@@ -1597,7 +1588,11 @@ qs('#loginFormEl').addEventListener('submit', e => {
 
 qs('#signupFormEl').addEventListener('submit', e => {
   e.preventDefault();
-  const res = Auth.signup(qs('#signupName').value, qs('#signupEmail').value, qs('#signupPassword').value);
+  const res = Auth.signup(
+    qs('#signupName').value,
+    qs('#signupEmail').value,
+    qs('#signupPassword').value
+  );
   const err = qs('#signupError');
   if (!res.ok) {
     err.textContent = res.err;
